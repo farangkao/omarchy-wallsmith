@@ -13,97 +13,283 @@ Item {
   property var manifest: null
 
   property bool opened: false
-  property string viewMode: "new"
-  property string draftViewMode: "new"
-  property string initialPrompt: ""
-  property string selectedRecordId: ""
   property bool themeContextEnabled: true
-  property bool workerBusy: false
-  property string activeMode: ""
-  property string activeRecordId: ""
+  property int activeJobs: 0
+  property var activeRefineIds: ({})
+  property var activeRefineJobs: ({})
+  property var pendingJobs: []
+  property var records: []
+  property var _prevJobIds: []
+  property string _pendingSig: ""
+  property string singleJobMode: ""
+  readonly property bool workerBusy: activeJobs > 0
+  readonly property int maxParallelJobs: 4
+
+  property string confirmAction: ""
+  property string confirmTargetId: ""
+  property string confirmMessage: ""
+
+  property string refineRecordId: ""
+  property string refinePrompt: ""
+  property string refineImage: ""
+  property var refineEdits: []
+  readonly property var refineEditsShown: refineEdits.slice(-3)
+  readonly property int refineEditsHidden: Math.max(0, refineEdits.length - 3)
+  readonly property bool refineActive: refineRecordId !== ""
+
+  property string inlineError: ""
 
   readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
-  readonly property string activityPath: stateHome + "/omarchy-wallpaper-agent/activity.json"
+  readonly property string activityPath: stateHome + "/omarchy-wallsmith/activity.json"
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
-  property color mutedForeground: Color.menu.text
   property color border: Color.menu.border
+  property color scrim: Color.menu.scrim
   property color selectedBackground: Color.menu.selectedBackground
   property color selectedText: Color.menu.selectedText
-  property color scrim: Color.menu.scrim
+  readonly property color accentColor: Color.accent
   property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
   readonly property int cornerRadius: Style.cornerRadius
   readonly property int contentMargin: Style.spacing.panelPadding
-  readonly property int cardWidth: Math.min(
-    Style.space(root.viewMode === "history" ? 680 : 640),
-    panel.width - Style.gapsOut * 2
+
+  readonly property var spinnerFrames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  property int spinnerFrame: 0
+  readonly property string statusText: activeJobs > 1
+    ? activeJobs + " wallpaper jobs running…"
+    : singleJobMode === "refine" ? "Editing wallpaper…" : "Generating wallpaper…"
+
+  readonly property int cardWidth: Math.min(Style.space(660), panel.width - Style.gapsOut * 2)
+  readonly property int rowHeight: Math.max(
+    Style.space(64),
+    Math.round(Style.font.body * 2.6 + Style.font.caption * 1.4 + Style.spacing.sm * 2)
   )
-  readonly property int promptEditorHeight: Math.min(
-    Math.max(Style.space(96), Math.ceil(promptInput.contentHeight) + Style.spacing.md * 2),
-    Math.max(Style.space(96), panel.height - Style.space(190))
-  )
-  readonly property int cardHeight: Math.min(
-    root.viewMode === "history" ? Style.space(470) : root.promptEditorHeight + Style.space(118),
-    panel.height - Style.gapsOut * 2
+  readonly property int maxVisibleRows: 4
+  readonly property int visibleRows: Math.min(historyModel.count, maxVisibleRows)
+  readonly property int listHeight: visibleRows > 0
+    ? visibleRows * rowHeight + (visibleRows - 1) * Style.spacing.sm
+    : 0
+  readonly property int editorHeight: Math.max(
+    Style.space(84),
+    Math.min(
+      Math.ceil(promptInput.contentHeight) + Style.spacing.md * 2 + Style.space(4),
+      Math.round(panel.height * 0.35)
+    )
   )
 
   ListModel { id: historyModel }
 
   function updateWorkingRows() {
     for (var i = 0; i < historyModel.count; i++) {
-      var working = root.workerBusy
-        && root.activeMode === "refine"
-        && historyModel.get(i).recordId === root.activeRecordId
-      historyModel.setProperty(i, "working", working)
+      var row = historyModel.get(i)
+      if (row.pending)
+        continue
+      historyModel.setProperty(i, "working", root.activeRefineIds[row.recordId] === true)
+    }
+  }
+
+  function currentRowKey() {
+    if (historyList.currentIndex < 0 || historyList.currentIndex >= historyModel.count)
+      return ""
+    var row = historyModel.get(historyList.currentIndex)
+    return row.pending ? "job:" + row.jobId : "rec:" + row.recordId
+  }
+
+  function rebuildModel() {
+    var selKey = root.currentRowKey()
+    historyModel.clear()
+    for (var p = 0; p < root.pendingJobs.length; p++) {
+      var pend = root.pendingJobs[p]
+      historyModel.append({
+        pending: true,
+        jobId: pend.jobId,
+        recordId: "",
+        prompt: pend.prompt || "Generating wallpaper",
+        image: "",
+        themeName: "",
+        updatedAt: pend.startedAt || "",
+        editsJson: "[]",
+        editCount: 0,
+        working: false
+      })
+    }
+    for (var r = 0; r < root.records.length; r++)
+      historyModel.append(root.records[r])
+
+    var nextIndex = historyModel.count > 0 ? 0 : -1
+    if (selKey !== "") {
+      for (var i = 0; i < historyModel.count; i++) {
+        var row = historyModel.get(i)
+        var key = row.pending ? "job:" + row.jobId : "rec:" + row.recordId
+        if (key === selKey) {
+          nextIndex = i
+          break
+        }
+      }
+    }
+    historyList.currentIndex = nextIndex
+    root.updateWorkingRows()
+  }
+
+  function prepareRecord(entry) {
+    entry = entry || ({})
+    var turns = entry.turns || []
+    var edits = []
+    for (var t = 0; t < turns.length; t++) {
+      var turn = turns[t] || ({})
+      if (String(turn.kind || "") === "refine")
+        edits.push({ instruction: String(turn.instruction || ""), at: String(turn.at || "") })
+    }
+    return {
+      pending: false,
+      jobId: "",
+      recordId: String(entry.recordId || ""),
+      prompt: String(entry.prompt || "Generated wallpaper"),
+      image: String(entry.image || ""),
+      themeName: String(entry.themeName || entry.themeSlug || "Unknown theme"),
+      updatedAt: String(entry.updatedAt || ""),
+      editsJson: JSON.stringify(edits),
+      editCount: edits.length,
+      working: false
     }
   }
 
   function applyActivity(content) {
-    var activity = ({})
-    try { activity = JSON.parse(String(content || "{}")) || ({}) } catch (e) { activity = ({}) }
-    root.workerBusy = activity.working === true
-    root.activeMode = root.workerBusy ? String(activity.mode || "") : ""
-    root.activeRecordId = root.workerBusy ? String(activity.recordId || "") : ""
-    root.updateWorkingRows()
+    var jobs = []
+    try {
+      var parsed = JSON.parse(String(content || "[]"))
+      if (Array.isArray(parsed))
+        jobs = parsed
+      else if (parsed && parsed.working === true)
+        jobs = [parsed]
+    } catch (e) {
+      jobs = []
+    }
+    var refineIds = ({})
+    var refineJobs = ({})
+    var pending = []
+    var ids = []
+    for (var i = 0; i < jobs.length; i++) {
+      var job = jobs[i] || ({})
+      var jobId = String(job.jobId || "")
+      ids.push(jobId)
+      if (String(job.mode || "") === "refine" && job.recordId) {
+        refineIds[String(job.recordId)] = true
+        refineJobs[String(job.recordId)] = jobId
+      } else {
+        pending.push({
+          jobId: jobId,
+          prompt: String(job.prompt || ""),
+          startedAt: String(job.startedAt || "")
+        })
+      }
+    }
+    root.activeJobs = jobs.length
+    root.activeRefineIds = refineIds
+    root.activeRefineJobs = refineJobs
+    root.singleJobMode = jobs.length === 1 ? String(jobs[0].mode || "") : ""
+
+    var finished = false
+    for (var f = 0; f < root._prevJobIds.length; f++) {
+      if (ids.indexOf(root._prevJobIds[f]) < 0) {
+        finished = true
+        break
+      }
+    }
+    root._prevJobIds = ids
+
+    var pendingSig = JSON.stringify(pending)
+    if (pendingSig !== root._pendingSig) {
+      root._pendingSig = pendingSig
+      root.pendingJobs = pending
+      root.rebuildModel()
+    } else {
+      root.updateWorkingRows()
+    }
+
+    // A job just completed: its result (new record, or updated turns on a
+    // refined record) is on disk but not in our snapshot.
+    if (finished && root.opened)
+      root.refreshHistory()
+  }
+
+  function refreshHistory() {
+    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    if (!sourceDir || historyProc.running)
+      return
+    historyProc.command = [sourceDir + "/bin/wallpaper-history"]
+    historyProc.running = true
+  }
+
+  function applyHistoryJson(content) {
+    var history = []
+    try { history = JSON.parse(String(content || "[]")) || [] } catch (e) { history = [] }
+    if (!Array.isArray(history))
+      history = []
+    var next = []
+    for (var i = 0; i < history.length; i++)
+      next.push(root.prepareRecord(history[i]))
+    root.records = next
+    root.rebuildModel()
+
+    if (root.refineActive) {
+      var found = null
+      for (var r = 0; r < root.records.length; r++) {
+        if (root.records[r].recordId === root.refineRecordId) {
+          found = root.records[r]
+          break
+        }
+      }
+      if (!found) {
+        root.clearRefineTarget()
+      } else {
+        root.refinePrompt = found.prompt
+        root.refineImage = found.image
+        try { root.refineEdits = JSON.parse(found.editsJson) || [] } catch (e) { root.refineEdits = [] }
+      }
+    }
+  }
+
+  function formatWhen(iso) {
+    if (!iso) return ""
+    var d = new Date(iso)
+    if (isNaN(d.getTime())) return String(iso).replace("T", " ").slice(0, 16)
+    var now = new Date()
+    var hh = ("0" + d.getHours()).slice(-2)
+    var mm = ("0" + d.getMinutes()).slice(-2)
+    if (d.toDateString() === now.toDateString()) return "Today " + hh + ":" + mm
+    var yesterday = new Date(now.getTime() - 86400000)
+    if (d.toDateString() === yesterday.toDateString()) return "Yesterday " + hh + ":" + mm
+    var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    var label = d.getDate() + " " + months[d.getMonth()]
+    if (d.getFullYear() !== now.getFullYear()) label += " " + d.getFullYear()
+    return label + " " + hh + ":" + mm
   }
 
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
-    root.viewMode = payload.mode === "history" ? "history" : "new"
-    root.draftViewMode = "new"
-    root.initialPrompt = String(payload.prompt || "")
-    root.selectedRecordId = ""
+    root.clearRefineTarget()
+    root.inlineError = ""
     root.themeContextEnabled = payload.themeContextEnabled !== false
-    promptInput.text = root.initialPrompt
+    promptInput.text = String(payload.prompt || "")
 
-    historyModel.clear()
     var history = payload.history || []
-    for (var i = 0; i < history.length; i++) {
-      var entry = history[i] || ({})
-      historyModel.append({
-        recordId: String(entry.recordId || ""),
-        prompt: String(entry.prompt || "Generated wallpaper"),
-        image: String(entry.image || ""),
-        themeName: String(entry.themeName || entry.themeSlug || "Unknown theme"),
-        updatedAt: String(entry.updatedAt || ""),
-        lastInstruction: String(entry.lastInstruction || ""),
-        working: false
-      })
-    }
-    root.updateWorkingRows()
+    var next = []
+    for (var i = 0; i < history.length; i++)
+      next.push(root.prepareRecord(history[i]))
+    root.records = next
+    historyList.currentIndex = -1
+    root.rebuildModel()
     historyList.currentIndex = historyModel.count > 0 ? 0 : -1
 
     root.opened = true
     Qt.callLater(function() {
-      if (root.viewMode === "history") {
+      if (payload.mode === "history" && historyModel.count > 0)
         historyList.forceActiveFocus()
-      } else {
-        promptInput.forceActiveFocus()
-        promptInput.cursorPosition = promptInput.text.length
-      }
+      else
+        root.focusPrompt()
     })
   }
 
@@ -118,85 +304,149 @@ Item {
   function dismiss() {
     root.opened = false
     if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "jesperlugner.wallpaper-agent")
+      root.shell.hide((root.manifest && root.manifest.id) || "jesperlugner.wallsmith")
   }
 
-  function beginRefine(index) {
+  function focusPrompt() {
+    promptInput.forceActiveFocus()
+    promptInput.cursorPosition = promptInput.text.length
+  }
+
+  function showError(message) {
+    root.inlineError = message
+    errorTimer.restart()
+  }
+
+  function setRefineTarget(index) {
     if (index < 0 || index >= historyModel.count)
       return
-    if (root.workerBusy) {
-      Quickshell.execDetached([
-        root.omarchyPath + "/bin/omarchy-notification-send",
-        "Wallpaper generation already running",
-        "Wait for the current job to finish before starting another edit"
-      ])
+    var entry = historyModel.get(index)
+    if (entry.pending) {
+      root.showError("Still generating — it can be refined once it lands in history")
       return
     }
+    if (root.refineRecordId === entry.recordId) {
+      root.clearRefineTarget()
+      return
+    }
+    root.refineRecordId = entry.recordId
+    root.refinePrompt = entry.prompt
+    root.refineImage = entry.image
+    var edits = []
+    try { edits = JSON.parse(entry.editsJson || "[]") || [] } catch (e) { edits = [] }
+    root.refineEdits = edits
+    root.focusPrompt()
+  }
 
-    root.selectedRecordId = historyModel.get(index).recordId
-    root.viewMode = "refine"
-    root.draftViewMode = "refine"
-    promptInput.text = ""
-    Qt.callLater(function() { promptInput.forceActiveFocus() })
+  function clearRefineTarget() {
+    root.refineRecordId = ""
+    root.refinePrompt = ""
+    root.refineImage = ""
+    root.refineEdits = []
   }
 
   function reusePrompt(index) {
     if (index < 0 || index >= historyModel.count)
       return
-
-    root.selectedRecordId = ""
-    root.viewMode = "new"
-    root.draftViewMode = "new"
+    root.clearRefineTarget()
     promptInput.text = historyModel.get(index).prompt
-    promptInput.cursorPosition = promptInput.text.length
-    Qt.callLater(function() { promptInput.forceActiveFocus() })
+    root.focusPrompt()
   }
 
-  function showHistory() {
-    if (root.viewMode !== "history")
-      root.draftViewMode = root.viewMode
-    root.viewMode = "history"
-    historyList.currentIndex = historyModel.count > 0 ? Math.max(0, historyList.currentIndex) : -1
-    Qt.callLater(function() { historyList.forceActiveFocus() })
+  function applyWallpaper(index) {
+    if (index < 0 || index >= historyModel.count)
+      return
+    var entry = historyModel.get(index)
+    if (entry.pending || !entry.image) {
+      root.showError("Still generating — it can be applied once it finishes")
+      return
+    }
+    Quickshell.execDetached([root.omarchyPath + "/bin/omarchy-theme-bg-set", entry.image])
+    root.dismiss()
   }
 
-  function showNew() {
-    root.selectedRecordId = ""
-    root.viewMode = "new"
-    root.draftViewMode = "new"
-    promptInput.text = ""
-    Qt.callLater(function() { promptInput.forceActiveFocus() })
+  function requestRowAction(index) {
+    if (index < 0 || index >= historyModel.count)
+      return
+    var row = historyModel.get(index)
+    if (row.pending) {
+      root.confirmAction = "cancel"
+      root.confirmTargetId = row.jobId
+      root.confirmMessage = "Stop generating this wallpaper?"
+    } else if (row.working) {
+      var jobId = root.activeRefineJobs[row.recordId]
+      if (!jobId)
+        return
+      root.confirmAction = "cancel"
+      root.confirmTargetId = jobId
+      root.confirmMessage = "Stop the running edit of this wallpaper?"
+    } else {
+      root.confirmAction = "delete"
+      root.confirmTargetId = row.recordId
+      root.confirmMessage = "Delete this wallpaper and its edit history?"
+    }
+    confirmDialog.selectedIndex = 0
   }
 
-  function showDraft() {
-    root.viewMode = root.draftViewMode === "refine" && root.selectedRecordId ? "refine" : "new"
-    Qt.callLater(function() { promptInput.forceActiveFocus() })
+  function closeConfirm() {
+    root.confirmAction = ""
+    root.confirmTargetId = ""
+    root.confirmMessage = ""
+    Qt.callLater(function() {
+      if (historyModel.count > 0)
+        historyList.forceActiveFocus()
+      else
+        root.focusPrompt()
+    })
   }
 
-  function toggleView() {
-    if (root.viewMode === "history")
-      root.showDraft()
-    else
-      root.showHistory()
+  function executeConfirm() {
+    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    var action = root.confirmAction
+    var target = root.confirmTargetId
+    if (sourceDir && target) {
+      if (action === "cancel") {
+        Quickshell.execDetached([sourceDir + "/bin/cancel-job", target])
+      } else if (action === "delete") {
+        Quickshell.execDetached([sourceDir + "/bin/delete-record", target])
+        var kept = []
+        for (var i = 0; i < root.records.length; i++) {
+          if (root.records[i].recordId !== target)
+            kept.push(root.records[i])
+        }
+        root.records = kept
+        if (root.refineRecordId === target)
+          root.clearRefineTarget()
+        root.rebuildModel()
+      }
+    }
+    root.closeConfirm()
+  }
+
+  // Esc backs out one level: refine target first, then the overlay.
+  function handleEscape() {
+    if (root.refineActive) {
+      root.clearRefineTarget()
+      root.focusPrompt()
+    } else {
+      root.dismiss()
+    }
   }
 
   function submit(ignoreThemeContext) {
-    if (root.workerBusy) {
-      Quickshell.execDetached([
-        root.omarchyPath + "/bin/omarchy-notification-send",
-        "Wallpaper generation already running",
-        "Only one wallpaper job can run at a time"
-      ])
+    if (root.refineActive && root.activeRefineIds[root.refineRecordId] === true) {
+      root.showError("This wallpaper is already being edited — wait for that edit to finish")
+      return
+    }
+    if (root.activeJobs >= root.maxParallelJobs) {
+      root.showError("Up to " + root.maxParallelJobs + " wallpaper jobs can run at once — wait for one to finish")
       return
     }
 
     var prompt = String(promptInput.text || "").trim()
     if (!prompt) {
-      Quickshell.execDetached([
-        root.omarchyPath + "/bin/omarchy-notification-send",
-        root.viewMode === "refine" ? "Wallpaper needs a change" : "Wallpaper needs an idea",
-        root.viewMode === "refine" ? "Describe what Codex should change" : "Describe what you want Codex to create"
-      ])
+      root.showError(root.refineActive ? "Describe the change you want" : "Describe the wallpaper you want")
+      root.focusPrompt()
       return
     }
 
@@ -212,13 +462,20 @@ Item {
     }
 
     var command = [sourceDir + "/bin/generate-wallpaper"]
-    if (root.viewMode === "refine")
-      command.push("--refine", root.selectedRecordId)
+    if (root.refineActive)
+      command.push("--refine", root.refineRecordId)
     if (!root.themeContextEnabled || ignoreThemeContext === true)
       command.push("--no-theme-context")
     command.push("--prompt", prompt)
     Quickshell.execDetached(command)
     root.dismiss()
+  }
+
+  Timer {
+    id: errorTimer
+    interval: 3200
+    repeat: false
+    onTriggered: root.inlineError = ""
   }
 
   FileView {
@@ -231,6 +488,14 @@ Item {
     onLoadFailed: root.applyActivity("")
   }
 
+  Process {
+    id: historyProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.applyHistoryJson(text)
+    }
+  }
+
   Timer {
     interval: 1000
     repeat: true
@@ -238,12 +503,19 @@ Item {
     onTriggered: activityFile.reload()
   }
 
+  Timer {
+    interval: 90
+    repeat: true
+    running: root.workerBusy && root.opened
+    onTriggered: root.spinnerFrame = (root.spinnerFrame + 1) % root.spinnerFrames.length
+  }
+
   PanelWindow {
     id: panel
     visible: root.opened
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
-    WlrLayershell.namespace: "jesperlugner-wallpaper-agent"
+    WlrLayershell.namespace: "jesperlugner-wallsmith"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
@@ -261,7 +533,10 @@ Item {
     BorderSurface {
       id: card
       width: root.cardWidth
-      height: root.cardHeight
+      height: Math.min(
+        content.implicitHeight + card.contentTopInset + card.contentBottomInset,
+        panel.height - Style.gapsOut * 2
+      )
       anchors.centerIn: parent
       radius: root.cornerRadius
       color: root.background
@@ -270,312 +545,487 @@ Item {
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
-      Item {
+      ConfirmDialog {
+        id: confirmDialog
         anchors.fill: parent
+        z: 20
+        opened: root.confirmAction !== ""
+        message: root.confirmMessage
+        cancelText: "Keep"
+        confirmText: root.confirmAction === "delete" ? "Delete" : "Stop job"
+        background: root.background
+        foreground: root.foreground
+        scrim: root.scrim
+        selectedBackground: root.selectedBackground
+        selectedText: root.selectedText
+        fontFamily: Style.font.menuFamily
+        cornerRadius: root.cornerRadius
+        onCanceled: root.closeConfirm()
+        onConfirmed: root.executeConfirm()
+      }
+
+      Column {
+        id: content
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
         anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
+        anchors.rightMargin: card.contentRightInset
+        spacing: Style.spacing.lg
 
         Item {
-          id: promptView
-          anchors.fill: parent
-          visible: root.viewMode !== "history"
+          width: parent.width
+          height: Math.max(titleText.implicitHeight, Style.space(22))
 
           Text {
-            id: promptTitle
-            anchors.top: parent.top
+            id: titleText
             anchors.left: parent.left
-            text: root.viewMode === "refine" ? "Refine wallpaper" : "Generate a wallpaper"
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.refineActive ? "Refine wallpaper" : "Generate a wallpaper"
             color: root.foreground
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.heading
             font.weight: Font.DemiBold
           }
 
-          Rectangle {
-            id: promptHistoryButton
-            width: Style.space(88)
-            height: Style.space(30)
-            anchors.top: parent.top
+          Row {
             anchors.right: parent.right
-            radius: root.cornerRadius
-            color: root.selectedBackground
-            opacity: promptHistoryMouse.containsMouse ? 1 : 0.72
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.spacing.sm
+            visible: root.workerBusy
 
             Text {
-              anchors.centerIn: parent
-              text: "History  →"
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.spinnerFrames[root.spinnerFrame]
+              color: root.accentColor
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.body
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.statusText
               color: root.foreground
+              opacity: 0.72
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
             }
-
-            MouseArea {
-              id: promptHistoryMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              onClicked: root.showHistory()
-            }
-          }
-
-          Text {
-            anchors.right: promptHistoryButton.left
-            anchors.rightMargin: Style.spacing.md
-            anchors.verticalCenter: promptHistoryButton.verticalCenter
-            visible: root.workerBusy
-            text: root.activeMode === "refine" ? "Editing wallpaper…" : "Generating wallpaper…"
-            color: root.foreground
-            opacity: 0.72
-            font.family: Style.font.menuFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Rectangle {
-            id: promptBox
-            height: root.promptEditorHeight
-            anchors.top: promptTitle.bottom
-            anchors.topMargin: Style.spacing.lg
-            anchors.left: parent.left
-            anchors.right: parent.right
-            radius: root.cornerRadius
-            color: root.selectedBackground
-
-            Text {
-              anchors.fill: parent
-              anchors.margins: Style.spacing.md
-              verticalAlignment: Text.AlignVCenter
-              wrapMode: Text.Wrap
-              visible: promptInput.text.length === 0
-              text: root.viewMode === "refine"
-                ? "Make the water brighter and preserve everything else..."
-                : "A misty brutalist city at sunrise..."
-              color: root.mutedForeground
-              opacity: 0.55
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.body
-            }
-
-            TextEdit {
-              id: promptInput
-              anchors.fill: parent
-              anchors.margins: Style.spacing.md
-              color: root.selectedText
-              selectionColor: Color.menu.selectedBorder
-              selectedTextColor: root.selectedText
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.body
-              textFormat: TextEdit.PlainText
-              wrapMode: TextEdit.Wrap
-              clip: true
-              selectByMouse: true
-
-              Keys.onPressed: function(event) {
-                if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
-                    && (event.modifiers & Qt.ControlModifier) !== 0) {
-                  root.toggleView()
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Escape) {
-                  root.dismiss()
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                  if ((event.modifiers & Qt.AltModifier) !== 0)
-                    promptInput.insert(promptInput.cursorPosition, "\n")
-                  else
-                    root.submit((event.modifiers & Qt.ShiftModifier) !== 0)
-                  event.accepted = true
-                }
-              }
-            }
-          }
-
-          Text {
-            anchors.top: promptBox.bottom
-            anchors.topMargin: Style.spacing.md
-            anchors.left: parent.left
-            text: "Return submits  ·  Shift+Return ignores theme  ·  Alt+Return newline  ·  Ctrl+Tab history  ·  Esc"
-            color: root.mutedForeground
-            opacity: 0.55
-            font.family: Style.font.menuFamily
-            font.pixelSize: Style.font.caption
           }
         }
 
-        Item {
-          id: historyView
-          anchors.fill: parent
-          visible: root.viewMode === "history"
+        Rectangle {
+          id: promptBox
+          width: parent.width
+          height: root.editorHeight
+          radius: root.cornerRadius
+          color: Style.controlFill(promptInput.activeFocus, editorHover.containsMouse, root.foreground, root.accentColor)
+          border.width: Style.controlBorderWidth(promptInput.activeFocus, editorHover.containsMouse)
+          border.color: Style.controlBorder(promptInput.activeFocus, editorHover.containsMouse, root.foreground, root.accentColor)
+
+          MouseArea {
+            id: editorHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.IBeamCursor
+            onClicked: root.focusPrompt()
+          }
 
           Text {
-            id: historyTitle
-            anchors.top: parent.top
-            anchors.left: parent.left
-            text: "Wallpaper history"
+            anchors.fill: parent
+            anchors.margins: Style.spacing.md
+            visible: promptInput.text.length === 0
+            wrapMode: Text.Wrap
+            text: root.refineActive
+              ? "Make the water brighter and preserve everything else..."
+              : "A misty brutalist city at sunrise..."
             color: root.foreground
-            font.family: Style.font.menuFamily
-            font.pixelSize: Style.font.heading
-            font.weight: Font.DemiBold
-          }
-
-          Rectangle {
-            id: historyNewButton
-            width: Style.space(72)
-            height: Style.space(30)
-            anchors.top: parent.top
-            anchors.right: parent.right
-            radius: root.cornerRadius
-            color: root.selectedBackground
-            opacity: historyNewMouse.containsMouse ? 1 : 0.72
-
-            Text {
-              anchors.centerIn: parent
-              text: "←  New"
-              color: root.foreground
-              font.family: Style.font.menuFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            MouseArea {
-              id: historyNewMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              onClicked: root.showNew()
-            }
-          }
-
-          Text {
-            anchors.right: historyNewButton.left
-            anchors.rightMargin: Style.spacing.md
-            anchors.verticalCenter: historyNewButton.verticalCenter
-            visible: root.workerBusy
-            text: root.activeMode === "refine" ? "One edit running" : "Generating new wallpaper…"
-            color: root.foreground
-            opacity: 0.72
-            font.family: Style.font.menuFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            id: historyHint
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            text: "Return edits  ·  Shift+Return reuses prompt  ·  Ctrl+Tab new  ·  Esc"
-            color: root.mutedForeground
-            opacity: 0.55
-            font.family: Style.font.menuFamily
-            font.pixelSize: Style.font.caption
-          }
-
-          Text {
-            anchors.centerIn: parent
-            visible: historyModel.count === 0
-            text: "No generated wallpapers yet"
-            color: root.mutedForeground
+            opacity: 0.45
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.body
           }
 
-          ListView {
-            id: historyList
-            anchors.top: historyTitle.bottom
-            anchors.topMargin: Style.spacing.lg
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: historyHint.top
-            anchors.bottomMargin: Style.spacing.md
-            visible: historyModel.count > 0
-            model: historyModel
-            spacing: Style.spacing.sm
+          TextEdit {
+            id: promptInput
+            anchors.fill: parent
+            anchors.margins: Style.spacing.md
+            color: root.foreground
+            selectionColor: Style.selectionFillFor(root.foreground, root.accentColor)
+            selectedTextColor: root.foreground
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.body
+            textFormat: TextEdit.PlainText
+            wrapMode: TextEdit.Wrap
             clip: true
-            focus: root.viewMode === "history"
-            keyNavigationEnabled: true
-            keyNavigationWraps: true
+            selectByMouse: true
 
             Keys.onPressed: function(event) {
-              if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
-                  && (event.modifiers & Qt.ControlModifier) !== 0) {
-                root.toggleView()
+              if (root.confirmAction !== "") {
+                if (confirmDialog.handleKey(event))
+                  event.accepted = true
+                return
+              }
+              if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                if (historyModel.count > 0)
+                  historyList.forceActiveFocus()
+                event.accepted = true
+              } else if (event.key === Qt.Key_T && (event.modifiers & Qt.ControlModifier) !== 0) {
+                root.themeContextEnabled = !root.themeContextEnabled
                 event.accepted = true
               } else if (event.key === Qt.Key_Escape) {
-                root.dismiss()
+                root.handleEscape()
                 event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                if ((event.modifiers & Qt.ShiftModifier) !== 0)
-                  root.reusePrompt(historyList.currentIndex)
+                if ((event.modifiers & Qt.AltModifier) !== 0)
+                  promptInput.insert(promptInput.cursorPosition, "\n")
                 else
-                  root.beginRefine(historyList.currentIndex)
+                  root.submit((event.modifiers & Qt.ShiftModifier) !== 0)
+                event.accepted = true
+              } else if (event.key === Qt.Key_Down
+                  && historyModel.count > 0
+                  && promptInput.cursorRectangle.y + promptInput.cursorRectangle.height
+                     >= promptInput.contentHeight - 2) {
+                historyList.forceActiveFocus()
                 event.accepted = true
               }
             }
+          }
+        }
 
-            delegate: Rectangle {
-              width: historyList.width
-              height: Style.space(76)
-              radius: root.cornerRadius
-              color: ListView.isCurrentItem || model.working ? root.selectedBackground : "transparent"
+        Rectangle {
+          id: refineStrip
+          width: parent.width
+          height: stripColumn.implicitHeight + Style.spacing.sm * 2
+          visible: root.refineActive
+          radius: root.cornerRadius
+          color: Util.alpha(root.accentColor, 0.10)
+
+          readonly property int textIndent: refineThumbFrame.width + Style.spacing.md
+
+          Column {
+            id: stripColumn
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.topMargin: Style.spacing.sm
+            anchors.leftMargin: Style.spacing.sm
+            anchors.rightMargin: Style.spacing.sm
+            spacing: Style.spacing.xs
+
+            Item {
+              width: parent.width
+              height: Math.max(Style.space(36), refineHead.implicitHeight)
 
               Rectangle {
-                id: thumbnailFrame
-                width: Style.space(104)
-                anchors.top: parent.top
-                anchors.bottom: parent.bottom
-                anchors.margins: Style.spacing.xs
+                id: refineThumbFrame
                 anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                height: Style.space(36)
+                width: Math.round(height * 16 / 9)
                 radius: Math.max(1, root.cornerRadius - Style.spacing.xs)
                 color: root.selectedBackground
                 clip: true
 
                 Image {
                   anchors.fill: parent
-                  source: "file://" + model.image
+                  source: root.refineImage ? "file://" + root.refineImage : ""
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
                   cache: false
+                  sourceSize.width: 320
                 }
               }
 
-              Text {
-                anchors.top: parent.top
-                anchors.topMargin: Style.spacing.sm
-                anchors.left: thumbnailFrame.right
-                anchors.leftMargin: Style.spacing.md
+              Button {
+                id: refineClear
                 anchors.right: parent.right
-                anchors.rightMargin: Style.spacing.md
-                text: model.prompt
-                color: root.foreground
-                font.family: Style.font.menuFamily
-                font.pixelSize: Style.font.body
-                wrapMode: Text.Wrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰅖"
+                iconSize: Style.font.bodySmall
+                fontFamily: Style.font.menuFamily
+                foreground: root.foreground
+                horizontalPadding: Style.spacing.sm
+                verticalPadding: Style.spacing.xs
+                tooltipText: "Back to new wallpaper (Esc)"
+                onClicked: {
+                  root.clearRefineTarget()
+                  root.focusPrompt()
+                }
               }
 
-              Text {
-                anchors.left: thumbnailFrame.right
+              Column {
+                id: refineHead
+                anchors.left: refineThumbFrame.right
                 anchors.leftMargin: Style.spacing.md
-                anchors.right: parent.right
+                anchors.right: refineClear.left
                 anchors.rightMargin: Style.spacing.md
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: Style.spacing.sm
-                text: model.working
-                  ? "●  Editing…"
-                  : model.themeName + "  ·  " + model.updatedAt.replace("T", " ").slice(0, 16)
-                color: model.working ? root.foreground : root.mutedForeground
-                opacity: model.working ? 0.9 : 0.55
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.spacing.xxs
+
+                Text {
+                  width: parent.width
+                  text: root.refineEdits.length > 0
+                    ? "Refining  ·  " + root.refineEdits.length + (root.refineEdits.length === 1 ? " edit so far" : " edits so far")
+                    : "Refining"
+                  color: root.accentColor
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                  font.weight: Font.DemiBold
+                }
+
+                Text {
+                  width: parent.width
+                  text: root.refinePrompt
+                  color: root.foreground
+                  opacity: 0.8
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+              }
+            }
+
+            Text {
+              visible: root.refineEditsHidden > 0
+              width: parent.width
+              leftPadding: refineStrip.textIndent
+              text: "+" + root.refineEditsHidden + " earlier " + (root.refineEditsHidden === 1 ? "edit" : "edits")
+              color: root.foreground
+              opacity: 0.45
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Repeater {
+              model: root.refineEditsShown
+
+              Text {
+                width: stripColumn.width
+                leftPadding: refineStrip.textIndent
+                text: "✎  " + modelData.instruction
+                  + (modelData.at ? "  ·  " + root.formatWhen(modelData.at) : "")
+                color: root.foreground
+                opacity: 0.7
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideRight
               }
+            }
+          }
+        }
 
-              MouseArea {
-                anchors.fill: parent
-                onClicked: {
-                  historyList.currentIndex = index
-                  historyList.forceActiveFocus()
-                }
-                onDoubleClicked: root.beginRefine(index)
+        Column {
+          width: parent.width
+          visible: historyModel.count > 0
+          spacing: Style.spacing.sm
+
+          Text {
+            text: "History · " + historyModel.count
+            color: root.foreground
+            opacity: 0.55
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          ListView {
+            id: historyList
+            width: parent.width
+            height: root.listHeight
+            model: historyModel
+            spacing: Style.spacing.sm
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            keyNavigationEnabled: true
+            keyNavigationWraps: false
+
+            Keys.onPressed: function(event) {
+              if (root.confirmAction !== "") {
+                if (confirmDialog.handleKey(event))
+                  event.accepted = true
+                return
+              }
+              if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                root.focusPrompt()
+                event.accepted = true
+              } else if (event.key === Qt.Key_T && (event.modifiers & Qt.ControlModifier) !== 0) {
+                root.themeContextEnabled = !root.themeContextEnabled
+                event.accepted = true
+              } else if (event.key === Qt.Key_Escape) {
+                root.handleEscape()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Up && historyList.currentIndex <= 0) {
+                root.focusPrompt()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Delete) {
+                root.requestRowAction(historyList.currentIndex)
+                event.accepted = true
+              } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                if ((event.modifiers & Qt.AltModifier) !== 0)
+                  root.applyWallpaper(historyList.currentIndex)
+                else if ((event.modifiers & Qt.ShiftModifier) !== 0)
+                  root.reusePrompt(historyList.currentIndex)
+                else
+                  root.setRefineTarget(historyList.currentIndex)
+                event.accepted = true
+              } else if (event.text && event.text.length === 1
+                  && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+                root.focusPrompt()
+                promptInput.insert(promptInput.cursorPosition, event.text)
+                event.accepted = true
               }
             }
+
+            delegate: Rectangle {
+              id: row
+              width: ListView.view.width
+              height: root.rowHeight
+              radius: root.cornerRadius
+
+              readonly property bool isTarget: !model.pending
+                && root.refineRecordId !== ""
+                && model.recordId === root.refineRecordId
+              readonly property bool hasCursor: historyList.activeFocus && ListView.isCurrentItem
+
+              color: hasCursor ? root.selectedBackground
+                : rowMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.accentColor)
+                : (model.working || model.pending) ? root.selectedBackground
+                : "transparent"
+
+              Rectangle {
+                visible: row.isTarget
+                width: Style.space(3)
+                anchors.left: parent.left
+                anchors.leftMargin: Style.spacing.xs
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.topMargin: Style.spacing.sm
+                anchors.bottomMargin: Style.spacing.sm
+                radius: width / 2
+                color: root.accentColor
+              }
+
+              Rectangle {
+                id: thumbnailFrame
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(10)
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.topMargin: Style.spacing.xs
+                anchors.bottomMargin: Style.spacing.xs
+                width: Math.round(height * 16 / 9)
+                radius: Math.max(1, root.cornerRadius - Style.spacing.xs)
+                color: root.selectedBackground
+                clip: true
+
+                Image {
+                  anchors.fill: parent
+                  source: model.image ? "file://" + model.image : ""
+                  fillMode: Image.PreserveAspectCrop
+                  asynchronous: true
+                  cache: false
+                  sourceSize.width: 320
+                }
+
+                Text {
+                  anchors.centerIn: parent
+                  visible: model.pending
+                  text: root.spinnerFrames[root.spinnerFrame]
+                  color: root.accentColor
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.title
+                }
+              }
+
+              Column {
+                anchors.left: thumbnailFrame.right
+                anchors.leftMargin: Style.spacing.md
+                anchors.right: parent.right
+                anchors.rightMargin: Style.spacing.md
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.spacing.xxs
+
+                Text {
+                  width: parent.width
+                  text: model.prompt
+                  color: row.hasCursor ? root.selectedText : root.foreground
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.body
+                  wrapMode: Text.Wrap
+                  maximumLineCount: 2
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  text: model.pending
+                    ? root.spinnerFrames[root.spinnerFrame] + "  Generating…"
+                    : model.working
+                      ? root.spinnerFrames[root.spinnerFrame] + "  Editing…"
+                      : model.themeName + "  ·  " + root.formatWhen(model.updatedAt)
+                        + (model.editCount > 0
+                          ? "  ·  " + model.editCount + (model.editCount === 1 ? " edit" : " edits")
+                          : "")
+                  color: (model.pending || model.working) ? root.accentColor : root.foreground
+                  opacity: (model.pending || model.working) ? 0.9 : 0.55
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                }
+              }
+
+              MouseArea {
+                id: rowMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                  historyList.currentIndex = index
+                  root.setRefineTarget(index)
+                }
+              }
+            }
+          }
+        }
+
+        Item {
+          width: parent.width
+          height: Math.max(hintText.implicitHeight, themeChip.implicitHeight)
+
+          Text {
+            id: hintText
+            anchors.left: parent.left
+            anchors.right: themeChip.left
+            anchors.rightMargin: Style.spacing.md
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.inlineError !== "" ? root.inlineError
+              : historyList.activeFocus
+                ? "Return refine  ·  Alt+Return apply  ·  Shift+Return reuse  ·  Del delete  ·  Esc"
+              : root.refineActive
+                ? "Return applies the edit  ·  Alt+Return newline  ·  Ctrl+T theme  ·  Esc back to new"
+                : "Return generates  ·  Alt+Return newline  ·  Ctrl+T theme"
+                  + (historyModel.count > 0 ? "  ·  Tab history" : "")
+                  + "  ·  Esc"
+            color: root.inlineError !== "" ? Color.urgent : root.foreground
+            opacity: root.inlineError !== "" ? 1 : 0.55
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
+
+          Button {
+            id: themeChip
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: root.themeContextEnabled ? "󰄲" : "󰄱"
+            text: "Match theme"
+            fontFamily: Style.font.menuFamily
+            fontSize: Style.font.caption
+            iconSize: Style.font.bodySmall
+            foreground: root.foreground
+            horizontalPadding: Style.spacing.sm
+            verticalPadding: Style.spacing.xs
+            tooltipText: "Give the agent the current theme palette. Toggle with Ctrl+T; Shift+Return submits once without it."
+            onClicked: root.themeContextEnabled = !root.themeContextEnabled
           }
         }
       }

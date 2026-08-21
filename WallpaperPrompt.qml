@@ -33,6 +33,10 @@ Item {
   property string refinePrompt: ""
   property string refineImage: ""
   property var refineEdits: []
+  property var refineVersions: []
+  property int refineVersionIndex: -1
+  readonly property var refineSelected: refineVersionIndex >= 0 && refineVersionIndex < refineVersions.length
+    ? refineVersions[refineVersionIndex] : null
   readonly property var refineEditsShown: refineEdits.slice(-3)
   readonly property int refineEditsHidden: Math.max(0, refineEdits.length - 3)
   readonly property bool refineActive: refineRecordId !== ""
@@ -110,6 +114,8 @@ Item {
         updatedAt: pend.startedAt || "",
         editsJson: "[]",
         editCount: 0,
+        turnsJson: "[]",
+        versionsJson: "[]",
         working: false
       })
     }
@@ -140,6 +146,15 @@ Item {
       if (String(turn.kind || "") === "refine")
         edits.push({ instruction: String(turn.instruction || ""), at: String(turn.at || "") })
     }
+    var allTurns = []
+    for (var a = 0; a < turns.length; a++) {
+      var at = turns[a] || ({})
+      allTurns.push({
+        kind: String(at.kind || ""),
+        instruction: String(at.instruction || ""),
+        at: String(at.at || "")
+      })
+    }
     return {
       pending: false,
       jobId: "",
@@ -150,8 +165,74 @@ Item {
       updatedAt: String(entry.updatedAt || ""),
       editsJson: JSON.stringify(edits),
       editCount: edits.length,
+      turnsJson: JSON.stringify(allTurns),
+      versionsJson: JSON.stringify(entry.versions || []),
       working: false
     }
+  }
+
+  // Version list for the refine strip: each snapshot v<N>.jpg holds the
+  // result of turn N-1, plus the live image as the last (current) entry.
+  function buildRefineVersions(entry) {
+    var files = []
+    var turns = []
+    try { files = JSON.parse(entry.versionsJson || "[]") || [] } catch (e) { files = [] }
+    try { turns = JSON.parse(entry.turnsJson || "[]") || [] } catch (e) { turns = [] }
+
+    function turnLabel(turn) {
+      if (!turn)
+        return "Earlier version"
+      if (turn.kind === "generate")
+        return "Original generation"
+      return turn.instruction || "Earlier version"
+    }
+
+    var list = []
+    for (var i = 0; i < files.length; i++) {
+      var file = String(files[i])
+      var match = file.match(/v(\d+)\.jpg$/)
+      var turn = match ? turns[parseInt(match[1], 10) - 1] : null
+      list.push({
+        file: file,
+        label: turnLabel(turn),
+        at: turn ? turn.at : "",
+        isCurrent: false
+      })
+    }
+    list.push({
+      file: String(entry.image || ""),
+      label: turns.length > 1 ? turnLabel(turns[turns.length - 1]) : "Original generation",
+      at: String(entry.updatedAt || ""),
+      isCurrent: true
+    })
+    root.refineVersions = list
+    root.refineVersionIndex = list.length - 1
+  }
+
+  function stepVersion(delta, wrap) {
+    var count = root.refineVersions.length
+    if (count < 2)
+      return
+    var next = root.refineVersionIndex + delta
+    if (wrap === true)
+      next = (next + count) % count
+    root.refineVersionIndex = Math.max(0, Math.min(next, count - 1))
+  }
+
+  function restoreSelectedVersion() {
+    var selected = root.refineSelected
+    if (!selected || selected.isCurrent || !root.refineActive)
+      return
+    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    if (!sourceDir)
+      return
+    if (root.activeRefineIds[root.refineRecordId] === true) {
+      root.showError("This wallpaper is being edited — wait for that edit to finish")
+      return
+    }
+    var name = selected.file.split("/").pop()
+    Quickshell.execDetached([sourceDir + "/bin/restore-version", root.refineRecordId, name])
+    root.dismiss()
   }
 
   function applyActivity(content) {
@@ -246,6 +327,7 @@ Item {
         root.refinePrompt = found.prompt
         root.refineImage = found.image
         try { root.refineEdits = JSON.parse(found.editsJson) || [] } catch (e) { root.refineEdits = [] }
+        root.buildRefineVersions(found)
       }
     }
   }
@@ -335,6 +417,7 @@ Item {
     var edits = []
     try { edits = JSON.parse(entry.editsJson || "[]") || [] } catch (e) { edits = [] }
     root.refineEdits = edits
+    root.buildRefineVersions(entry)
     root.focusPrompt()
   }
 
@@ -343,6 +426,8 @@ Item {
     root.refinePrompt = ""
     root.refineImage = ""
     root.refineEdits = []
+    root.refineVersions = []
+    root.refineVersionIndex = -1
   }
 
   function reusePrompt(index) {
@@ -675,8 +760,15 @@ Item {
               } else if (event.key === Qt.Key_Escape) {
                 root.handleEscape()
                 event.accepted = true
+              } else if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right)
+                  && (event.modifiers & Qt.AltModifier) !== 0
+                  && root.refineActive && root.refineVersions.length > 1) {
+                root.stepVersion(event.key === Qt.Key_Left ? -1 : 1, false)
+                event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                if ((event.modifiers & Qt.AltModifier) !== 0)
+                if ((event.modifiers & Qt.ControlModifier) !== 0)
+                  root.restoreSelectedVersion()
+                else if ((event.modifiers & Qt.AltModifier) !== 0)
                   promptInput.insert(promptInput.cursorPosition, "\n")
                 else
                   root.submit((event.modifiers & Qt.ShiftModifier) !== 0)
@@ -728,11 +820,20 @@ Item {
 
                 Image {
                   anchors.fill: parent
-                  source: root.refineImage ? "file://" + root.refineImage : ""
+                  source: root.refineSelected && root.refineSelected.file
+                    ? "file://" + root.refineSelected.file
+                    : root.refineImage ? "file://" + root.refineImage : ""
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: true
                   cache: false
                   sourceSize.width: 320
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  visible: root.refineVersions.length > 1
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.stepVersion(1, true)
                 }
               }
 
@@ -783,6 +884,23 @@ Item {
                   elide: Text.ElideRight
                 }
               }
+            }
+
+            Text {
+              visible: root.refineVersions.length > 1 && root.refineSelected !== null
+              width: parent.width
+              leftPadding: refineStrip.textIndent
+              text: root.refineSelected
+                ? "◂ " + (root.refineVersionIndex + 1) + "/" + root.refineVersions.length + " ▸  "
+                  + (root.refineSelected.isCurrent
+                    ? "Current version"
+                    : root.refineSelected.label + "  ·  Ctrl+Return restores")
+                : ""
+              color: root.refineSelected && !root.refineSelected.isCurrent ? root.accentColor : root.foreground
+              opacity: root.refineSelected && !root.refineSelected.isCurrent ? 0.95 : 0.55
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
             }
 
             Text {
@@ -1001,7 +1119,9 @@ Item {
               : historyList.activeFocus
                 ? "Return refine  ·  Alt+Return apply  ·  Shift+Return reuse  ·  Del delete  ·  Esc"
               : root.refineActive
-                ? "Return applies the edit  ·  Alt+Return newline  ·  Ctrl+T theme  ·  Esc back to new"
+                ? "Return applies the edit  ·  Alt+Return newline"
+                  + (root.refineVersions.length > 1 ? "  ·  Alt+←/→ versions" : "  ·  Ctrl+T theme")
+                  + "  ·  Esc back to new"
                 : "Return generates  ·  Alt+Return newline  ·  Ctrl+T theme"
                   + (historyModel.count > 0 ? "  ·  Tab history" : "")
                   + "  ·  Esc"

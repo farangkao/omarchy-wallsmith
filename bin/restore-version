@@ -1,0 +1,90 @@
+#!/bin/bash
+
+set -euo pipefail
+
+record_id="${1:-}"
+version_name="${2:-}"
+if [[ ! $record_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || ! $version_name =~ ^v[0-9]{1,6}\.jpg$ ]]; then
+  echo "Usage: restore-version <record-id> <vNNN.jpg>" >&2
+  exit 2
+fi
+
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallsmith"
+records_dir="$state_root/records"
+record_file="$records_dir/$record_id.json"
+version_file="$state_root/versions/$record_id/$version_name"
+
+notify() {
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    omarchy-notification-send "$@" >/dev/null 2>&1 || true
+  fi
+}
+
+[[ -r $record_file && -f $version_file ]] || {
+  notify "Wallpaper version unavailable" "That version no longer exists"
+  exit 1
+}
+
+# A running edit owns the record's image; do not swap pixels underneath it.
+exec 9>"$records_dir/$record_id.lock"
+if ! flock -n 9; then
+  notify "Wallpaper not restored" "That wallpaper is being edited; wait for the edit to finish"
+  exit 1
+fi
+
+image=$(jq -r '.image // empty' "$record_file")
+[[ -n $image && -f $image ]] || {
+  notify "Wallpaper not restored" "The wallpaper file is missing"
+  exit 1
+}
+image=$(realpath "$image")
+case "$image" in
+"$HOME/.config/omarchy/backgrounds/"*) ;;
+*)
+  notify "Wallpaper not restored" "The wallpaper is outside Omarchy backgrounds"
+  exit 1
+  ;;
+esac
+
+# Snapshot the pixels being replaced so the restore itself can be undone,
+# then swap in the chosen version atomically. Same naming rule as the
+# worker: v<N> is the result of turn N-1.
+versions_dir="$state_root/versions/$record_id"
+turn_count=$(jq -r '.turns | length' "$record_file")
+cp -p "$image" "$(printf '%s/v%03d.jpg' "$versions_dir" "$turn_count")"
+
+restore_tmp="$versions_dir/.restore.tmp"
+cp "$version_file" "$restore_tmp"
+mv "$restore_tmp" "$image"
+
+while IFS= read -r -d '' old_version; do
+  rm -f "$old_version"
+done < <(find "$versions_dir" -maxdepth 1 -type f -name 'v*.jpg' -print0 | sort -z | head -z -n -5)
+
+restored_at=$(date --iso-8601=seconds)
+record_tmp="$versions_dir/.record.tmp"
+jq \
+  --arg at "$restored_at" \
+  --arg version "$version_name" \
+  '.updatedAt = $at
+    | .turns = ((.turns // []) + [{
+        kind: "restore",
+        instruction: ("Restored earlier version " + $version),
+        jobId: null,
+        logPath: null,
+        at: $at
+      }])' \
+  "$record_file" >"$record_tmp"
+mv "$record_tmp" "$record_file"
+
+omarchy theme bg set "$image" >/dev/null 2>&1 || true
+if command -v omarchy-shell >/dev/null 2>&1; then
+  refresh_dir="$state_root/background-refresh"
+  refresh_link="$refresh_dir/restore-$(date +%s%N).jpg"
+  mkdir -p "$refresh_dir"
+  ln -s "$image" "$refresh_link"
+  omarchy-shell -q background set "$refresh_link" || true
+fi
+
+notify --image "$image" "Wallpaper restored" "Reverted to an earlier version"
+printf 'Restored %s to %s\n' "$record_id" "$version_name"

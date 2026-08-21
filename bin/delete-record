@@ -53,6 +53,7 @@ if [[ -d $state_root/background-refresh && -n $image ]]; then
   done < <(find "$state_root/background-refresh" -maxdepth 1 -type l -print0)
 fi
 
+rm -rf "$state_root/versions/$record_id"
 rm -f "$record_file" "$records_dir/$record_id.lock"
 
 if (( was_current )); then

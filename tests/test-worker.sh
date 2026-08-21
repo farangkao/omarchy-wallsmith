@@ -161,6 +161,31 @@ grep -F "omarchy-shell -q background set ${refresh_links[0]}" "$test_log" >/dev/
   exit 1
 }
 
+# The refine must have snapshotted the outgoing pixels, and restore-version
+# must bring them back while snapshotting the replaced state.
+versions_dir="$fake_home/.local/state/omarchy-wallsmith/versions/$record_id"
+mapfile -t snapshots < <(find "$versions_dir" -maxdepth 1 -type f -name 'v*.jpg' | sort)
+[[ ${#snapshots[@]} -eq 1 ]] || { echo "Expected one version snapshot after refine" >&2; exit 1; }
+[[ $(sha256sum "${snapshots[0]}" | cut -d' ' -f1) == "$before_refine" ]] || {
+  echo "Version snapshot does not match the pre-refine wallpaper" >&2
+  exit 1
+}
+
+HOME="$fake_home" \
+XDG_STATE_HOME="$fake_home/.local/state" \
+PATH="$fake_bin:/usr/bin:/bin" \
+TEST_LOG="$test_log" \
+  "$plugin_dir/bin/restore-version" "$record_id" "$(basename "${snapshots[0]}")"
+
+after_restore=$(sha256sum "${wallpapers[0]}" | cut -d' ' -f1)
+[[ $after_restore == "$before_refine" ]] || { echo "Restore did not bring back the earlier version" >&2; exit 1; }
+jq -e '(.turns | length) == 3 and .turns[2].kind == "restore"' "${records[0]}" >/dev/null
+snapshot_count=$(find "$versions_dir" -maxdepth 1 -type f -name 'v*.jpg' | wc -l)
+[[ $snapshot_count -eq 2 ]] || { echo "Restore did not snapshot the replaced pixels" >&2; exit 1; }
+grep -F "notify --image ${wallpapers[0]} Wallpaper restored" "$test_log" >/dev/null
+HOME="$fake_home" XDG_STATE_HOME="$fake_home/.local/state" "$plugin_dir/bin/wallpaper-history" |
+  jq -e --arg id "$record_id" '.[] | select(.recordId == $id) | (.versions | length) == 2' >/dev/null
+
 HOME="$fake_home" \
 XDG_STATE_HOME="$fake_home/.local/state" \
 PATH="$fake_bin:/usr/bin:/bin" \

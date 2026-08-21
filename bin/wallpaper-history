@@ -93,5 +93,13 @@ done < <(find "$records_dir" -maxdepth 1 -type f -name '*.json' -print0)
 if (( ${#record_files[@]} == 0 )); then
   printf '%s\n' '[]'
 else
-  jq -s 'sort_by(.updatedAt) | reverse | .[0:50]' "${record_files[@]}"
+  for record_file in "${record_files[@]}"; do
+    record_id=$(jq -r '.recordId // empty' "$record_file")
+    versions='[]'
+    versions_dir="$state_root/versions/$record_id"
+    if [[ -n $record_id && -d $versions_dir ]]; then
+      versions=$(find "$versions_dir" -maxdepth 1 -type f -name 'v*.jpg' | sort | jq -Rn '[inputs]')
+    fi
+    jq -c --argjson versions "$versions" '. + {versions: $versions}' "$record_file"
+  done | jq -s 'sort_by(.updatedAt) | reverse | .[0:50]'
 fi

@@ -450,6 +450,15 @@ magick "$raw_image" \
 
 if [[ $mode == refine ]]; then
   final_image="$source_image"
+  # Snapshot the outgoing pixels so this edit can be undone. v<N> is the
+  # result of turn N-1 (turns are 0-based); keep the newest five.
+  versions_dir="$state_root/versions/$record_id"
+  mkdir -p "$versions_dir"
+  turn_count=$(jq -r '.turns | length' "$record_file")
+  cp -p "$final_image" "$(printf '%s/v%03d.jpg' "$versions_dir" "$turn_count")"
+  while IFS= read -r -d '' old_version; do
+    rm -f "$old_version"
+  done < <(find "$versions_dir" -maxdepth 1 -type f -name 'v*.jpg' -print0 | sort -z | head -z -n -5)
 else
   background_dir="$HOME/.config/omarchy/backgrounds/$theme_slug"
   final_image="$background_dir/ai-$job_id.jpg"

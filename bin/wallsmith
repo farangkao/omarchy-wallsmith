@@ -17,7 +17,7 @@ while (( $# > 0 )); do
     shift
     ;;
   -h | --help)
-    echo "Usage: omarchy-wallpaper [--history] [--no-theme-context] [prompt]"
+    echo "Usage: wallsmith [--history] [--no-theme-context] [prompt]"
     exit 0
     ;;
   --)
@@ -50,10 +50,10 @@ else
     --argjson themeContextEnabled "$theme_context_enabled" \
     '{mode: $mode, prompt: $prompt, history: $history, themeContextEnabled: $themeContextEnabled}')
 fi
-result=$(omarchy-shell shell summon jesperlugner.wallpaper-agent "$payload")
+result=$(omarchy-shell shell summon jesperlugner.wallsmith "$payload")
 
 if [[ $result != "ok" ]]; then
   echo "Wallpaper Agent is not available. Enable it with:" >&2
-  echo "  omarchy plugin enable jesperlugner.wallpaper-agent" >&2
+  echo "  omarchy plugin enable jesperlugner.wallsmith" >&2
   exit 1
 fi

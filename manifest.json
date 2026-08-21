@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "jesperlugner.wallpaper-agent",
-  "name": "Wallpaper Agent",
-  "version": "0.4.0",
+  "id": "jesperlugner.wallsmith",
+  "name": "Wallsmith",
+  "version": "0.7.0",
   "author": "Jesper Lugner",
-  "description": "Generate, revisit, and refine crop-safe Omarchy wallpapers with Codex",
+  "description": "Generate, revisit, and refine crop-safe AI wallpapers for Omarchy",
   "kinds": [
     "overlay",
     "bar-widget"
@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Wallpaper Generation",
-    "description": "Shows while Codex is generating a wallpaper",
+    "description": "Shows while Wallsmith is generating wallpapers",
     "category": "AI",
     "allowMultiple": false,
     "defaultSection": "right"

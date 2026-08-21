@@ -22,12 +22,12 @@ TEST_ARGV_FILE="$argv_file" \
 HOME="$fake_home" \
 XDG_STATE_HOME="$fake_home/.local/state" \
 PATH="$fake_bin:/usr/bin:/bin" \
-  "$plugin_dir/bin/omarchy-wallpaper" --no-theme-context "A warm desert at noon"
+  "$plugin_dir/bin/wallsmith" --no-theme-context "A warm desert at noon"
 
 mapfile -d '' -t argv <"$argv_file"
 [[ ${argv[0]} == shell ]]
 [[ ${argv[1]} == summon ]]
-[[ ${argv[2]} == jesperlugner.wallpaper-agent ]]
+[[ ${argv[2]} == jesperlugner.wallsmith ]]
 jq -e '
   .mode == "new"
   and
@@ -37,7 +37,7 @@ jq -e '
 ' >/dev/null <<<"${argv[3]}"
 
 legacy_id="20260821-101010-1234"
-legacy_job="$fake_home/.local/state/omarchy-wallpaper-agent/jobs/$legacy_id"
+legacy_job="$fake_home/.local/state/omarchy-wallsmith/jobs/$legacy_id"
 legacy_image="$fake_home/.config/omarchy/backgrounds/test-theme/ai-$legacy_id.jpg"
 mkdir -p "$legacy_job" "$(dirname "$legacy_image")"
 magick -size 32x18 xc:'#223344' "$legacy_image"
@@ -49,7 +49,7 @@ HOME="$fake_home" \
 XDG_STATE_HOME="$fake_home/.local/state" \
 TEST_ARGV_FILE="$argv_file" \
 PATH="$fake_bin:/usr/bin:/bin" \
-  "$plugin_dir/bin/omarchy-wallpaper" --history
+  "$plugin_dir/bin/wallsmith" --history
 
 mapfile -d '' -t argv <"$argv_file"
 jq -e \

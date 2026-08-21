@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "jesperlugner.wallpaper-agent",
   "name": "Wallpaper Agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "Jesper Lugner",
-  "description": "Generate a crop-safe wallpaper with Codex and apply it to the current Omarchy theme",
+  "description": "Generate, revisit, and refine crop-safe Omarchy wallpapers with Codex",
   "kinds": [
     "overlay",
     "bar-widget"

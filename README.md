@@ -14,9 +14,17 @@ o.bind(
   "Generate wallpaper",
   "$HOME/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper"
 )
+o.bind(
+  "SUPER + CTRL + SHIFT + G",
+  "Wallpaper history",
+  "$HOME/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper --history"
+)
 ```
 
-Then reload Hyprland with `hyprctl reload` and press `Super+Ctrl+G`.
+Then reload Hyprland with `hyprctl reload`.
+
+- `Super+Ctrl+G` opens a new wallpaper prompt.
+- `Super+Ctrl+Shift+G` opens generated wallpaper history.
 
 You can optionally prefill the prompt:
 
@@ -36,6 +44,8 @@ The current backend is Codex.
 
 In the prompt, press `Return` to generate with the current theme, `Shift+Return` to generate without theme context, or `Esc` to close it.
 
+In history, use the arrow keys to choose a wallpaper. Press `Return` to describe an edit in its existing Codex thread, or `Shift+Return` to copy its original prompt into a new-generation prompt. Refinements replace the selected wallpaper file instead of creating another image. Each original generation therefore occupies one wallpaper slot no matter how many times it is refined.
+
 While a generation is running, a small animated `Generating` indicator appears in the top bar. It disappears completely when the worker finishes or stops.
 
 ## How it works
@@ -46,6 +56,8 @@ While a generation is running, a small animated `Generating` indicator appears i
 4. It keeps the composition crop-safe for all display aspect ratios and normalizes the result to the largest active monitor.
 5. It stores the JPEG in `~/.config/omarchy/backgrounds/<current-theme>/`.
 6. It applies the image with `omarchy theme bg set` and sends a notification.
+
+For refinements, the plugin resumes the exact saved Codex session and attaches the current wallpaper as the editing reference. Conversation context preserves the intent; the attachment preserves the actual pixels. The selected JPEG is then replaced atomically. Prompts, session metadata, and per-turn log paths are kept under `~/.local/state/omarchy-wallpaper-agent/records/`, while detailed job logs remain under `jobs/`.
 
 Omarchy currently uses one shared background and center-crops it independently on each monitor. Mixed portrait and landscape displays therefore share a crop-safe master rather than receiving separate images.
 

@@ -2,16 +2,22 @@
 
 set -euo pipefail
 
+plugin_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 theme_context_enabled=true
+mode="new"
 
 while (( $# > 0 )); do
   case "$1" in
+  --history)
+    mode="history"
+    shift
+    ;;
   --no-theme-context)
     theme_context_enabled=false
     shift
     ;;
   -h | --help)
-    echo "Usage: omarchy-wallpaper [--no-theme-context] [prompt]"
+    echo "Usage: omarchy-wallpaper [--history] [--no-theme-context] [prompt]"
     exit 0
     ;;
   --)
@@ -29,10 +35,20 @@ while (( $# > 0 )); do
 done
 
 prompt="$*"
-payload=$(jq -cn \
-  --arg prompt "$prompt" \
-  --argjson themeContextEnabled "$theme_context_enabled" \
-  '{prompt: $prompt, themeContextEnabled: $themeContextEnabled}')
+if [[ $mode == history ]]; then
+  [[ -z $prompt ]] || { echo "--history does not accept a prompt" >&2; exit 2; }
+  history=$("$plugin_dir/bin/wallpaper-history")
+  payload=$(jq -cn \
+    --arg mode "$mode" \
+    --argjson history "$history" \
+    '{mode: $mode, history: $history}')
+else
+  payload=$(jq -cn \
+    --arg mode "$mode" \
+    --arg prompt "$prompt" \
+    --argjson themeContextEnabled "$theme_context_enabled" \
+    '{mode: $mode, prompt: $prompt, themeContextEnabled: $themeContextEnabled}')
+fi
 result=$(omarchy-shell shell summon jesperlugner.wallpaper-agent "$payload")
 
 if [[ $result != "ok" ]]; then

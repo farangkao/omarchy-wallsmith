@@ -54,17 +54,23 @@ for dependency in codex flock hyprctl jq magick omarchy; do
   fi
 done
 
-state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallpaper-agent"
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallsmith"
 omarchy_current_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current"
 records_dir="$state_root/records"
 mkdir -p "$state_root/jobs" "$records_dir"
 status_file="$state_root/status"
 activity_file="$state_root/activity.json"
+activity_lock="$state_root/activity.lock"
+max_parallel=4
 
-exec 9>"$state_root/generate.lock"
-if ! flock -n 9; then
-  notify "Wallpaper already generating" "Wait for the current Codex job to finish"
-  exit 0
+# New generations run in parallel; edits serialize per record because they
+# resume one Codex session and replace one image file.
+if [[ $mode == refine ]]; then
+  exec 9>"$records_dir/$record_id.lock"
+  if ! flock -n 9; then
+    notify "Wallpaper edit already running" "That wallpaper is already being edited; wait for the current edit to finish"
+    exit 0
+  fi
 fi
 
 job_id="$(date +%Y%m%d-%H%M%S)-$$"
@@ -73,19 +79,95 @@ mkdir -p "$job_dir"
 log_file="$job_dir/job.log"
 exec >>"$log_file" 2>&1
 
+# activity.json holds one entry per running job. Every mutation happens under
+# activity_lock, prunes entries whose pid is gone, and keeps the status file
+# ("working"/"idle" for the bar widget) in sync.
+read_activity() {
+  local current="[]" pid live_json='[]'
+  local live=()
+  if [[ -r $activity_file ]]; then
+    current=$(jq -c 'if type == "array" then . elif type == "object" then [.] else [] end' \
+      "$activity_file" 2>/dev/null || printf '[]')
+  fi
+  while IFS= read -r pid; do
+    if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      live+=("$pid")
+    fi
+  done < <(jq -r '.[].pid // empty' <<<"$current")
+  if (( ${#live[@]} > 0 )); then
+    live_json=$(printf '%s\n' "${live[@]}" | jq -cs '.')
+  fi
+  jq -c --argjson live "$live_json" '[ .[] | select(.pid as $p | ($live | index($p)) != null) ]' <<<"$current"
+}
+
+write_activity() {
+  local next=$1
+  if [[ $(jq 'length' <<<"$next") -eq 0 ]]; then
+    rm -f "$activity_file"
+    printf '%s\n' idle >"$status_file"
+  else
+    printf '%s\n' "$next" >"$activity_file.tmp"
+    mv "$activity_file.tmp" "$activity_file"
+    printf '%s\n' working >"$status_file"
+  fi
+}
+
+activity_add_locked() {
+  local entry=$1 current count
+  current=$(read_activity)
+  count=$(jq 'length' <<<"$current")
+  (( count < max_parallel )) || return 3
+  write_activity "$(jq -c --argjson entry "$entry" '. + [$entry]' <<<"$current")"
+}
+
+activity_remove_locked() {
+  write_activity "$(read_activity | jq -c --arg jobId "$job_id" '[ .[] | select(.jobId != $jobId) ]')"
+}
+
+activity_locked() {
+  (
+    flock 8
+    "$@"
+  ) 8>>"$activity_lock"
+}
+
+# Job directories hold Codex event logs and grow forever otherwise. Drop
+# dirs older than 30 days that no record references (records keep their
+# workspace and per-turn logs alive indefinitely).
+prune_old_jobs() {
+  local referenced dir job
+  referenced=$(jq -r '((.turns // [])[].jobId // empty), (.workspace // empty | split("/") | last // empty)' \
+    "$records_dir"/*.json 2>/dev/null | sort -u || true)
+  while IFS= read -r -d '' dir; do
+    job=$(basename "$dir")
+    if ! grep -Fxq "$job" <<<"$referenced"; then
+      rm -rf "$dir"
+    fi
+  done < <(find "$state_root/jobs" -mindepth 1 -maxdepth 1 -type d -mtime +30 -print0 2>/dev/null)
+}
+
+activity_added=0
 failure_notified=0
 on_exit() {
-  local status=$1
-  rm -f "$activity_file"
-  printf '%s\n' idle >"$status_file"
-  if (( status != 0 && failure_notified == 0 )); then
-    notify "Wallpaper generation failed" "Codex stopped before producing an image. Log: $log_file"
+  local status=$1 cancelled=0
+  if [[ -e $state_root/cancelled/$job_id ]]; then
+    rm -f "$state_root/cancelled/$job_id"
+    cancelled=1
+  fi
+  if (( activity_added )); then
+    activity_locked activity_remove_locked || true
+  fi
+  if (( status != 0 )); then
+    if (( cancelled )); then
+      notify "Wallpaper job cancelled" "Stopped before finishing; nothing was changed"
+    elif (( failure_notified == 0 )); then
+      notify "Wallpaper generation failed" "Codex stopped before producing an image. Log: $log_file"
+    fi
   fi
 }
 trap 'on_exit $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-printf '%s\n' working >"$status_file"
 
 record_file=""
 source_image=""
@@ -138,22 +220,27 @@ if [[ $mode == refine ]]; then
   fi
 fi
 
-activity_tmp="$job_dir/activity.json"
-jq -n \
+activity_entry=$(jq -n \
   --arg mode "$mode" \
   --arg recordId "$record_id" \
   --arg jobId "$job_id" \
   --argjson pid "$$" \
+  --arg prompt "$prompt" \
   --arg startedAt "$(date --iso-8601=seconds)" \
   '{
-    working: true,
     mode: $mode,
     recordId: $recordId,
     jobId: $jobId,
     pid: $pid,
+    prompt: $prompt,
     startedAt: $startedAt
-  }' >"$activity_tmp"
-mv "$activity_tmp" "$activity_file"
+  }')
+if ! activity_locked activity_add_locked "$activity_entry"; then
+  failure_notified=1
+  notify "Wallpaper queue is full" "Up to $max_parallel Codex jobs can run at once; wait for one to finish"
+  exit 0
+fi
+activity_added=1
 
 monitors_json=$(hyprctl monitors -j)
 if ! jq -e '[.[] | select((.disabled // false) == false)] | length > 0' >/dev/null <<<"$monitors_json"; then
@@ -446,5 +533,7 @@ else
     "Wallpaper ready" \
     "Set at ${target_width}×${target_height} and added to $theme_slug"
 fi
+
+prune_old_jobs || true
 
 printf 'Wallpaper: %s\n' "$final_image"

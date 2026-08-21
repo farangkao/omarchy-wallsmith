@@ -2,16 +2,37 @@
 
 set -euo pipefail
 
-state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallpaper-agent"
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallsmith"
 records_dir="$state_root/records"
 mkdir -p "$records_dir"
 
+# Prune activity entries whose worker died without cleaning up (SIGKILL,
+# power loss). Runs under the same lock the workers use.
 activity_file="$state_root/activity.json"
-if [[ -r $activity_file ]]; then
-  activity_pid=$(jq -r '.pid // empty' "$activity_file" 2>/dev/null || true)
-  if [[ ! $activity_pid =~ ^[0-9]+$ ]] || ! kill -0 "$activity_pid" 2>/dev/null; then
-    rm -f "$activity_file"
-  fi
+if [[ -e $activity_file ]]; then
+  (
+    flock 8
+    current=$(jq -c 'if type == "array" then . elif type == "object" then [.] else [] end' \
+      "$activity_file" 2>/dev/null || printf '[]')
+    live=()
+    while IFS= read -r pid; do
+      if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+        live+=("$pid")
+      fi
+    done < <(jq -r '.[].pid // empty' <<<"$current")
+    live_json='[]'
+    if (( ${#live[@]} > 0 )); then
+      live_json=$(printf '%s\n' "${live[@]}" | jq -cs '.')
+    fi
+    pruned=$(jq -c --argjson live "$live_json" '[ .[] | select(.pid as $p | ($live | index($p)) != null) ]' <<<"$current")
+    if [[ $(jq 'length' <<<"$pruned") -eq 0 ]]; then
+      rm -f "$activity_file"
+      printf '%s\n' idle >"$state_root/status"
+    else
+      printf '%s\n' "$pruned" >"$activity_file.tmp"
+      mv "$activity_file.tmp" "$activity_file"
+    fi
+  ) 8>>"$state_root/activity.lock"
 fi
 
 # Import images created before history tracking was added. Their original
@@ -72,5 +93,5 @@ done < <(find "$records_dir" -maxdepth 1 -type f -name '*.json' -print0)
 if (( ${#record_files[@]} == 0 )); then
   printf '%s\n' '[]'
 else
-  jq -s 'sort_by(.updatedAt) | reverse' "${record_files[@]}"
+  jq -s 'sort_by(.updatedAt) | reverse | .[0:50]' "${record_files[@]}"
 fi

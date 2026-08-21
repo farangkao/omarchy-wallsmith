@@ -32,12 +32,20 @@ EOF
 
 cat >"$fake_bin/codex" <<'EOF'
 #!/bin/bash
+if [[ -n ${TEST_CODEX_GATE:-} ]]; then
+  for _ in $(seq 1 200); do
+    [[ -e $TEST_CODEX_GATE ]] && break
+    sleep 0.05
+  done
+fi
 printf 'codex-arg=%s\n' "$@" >>"$TEST_LOG"
 task="${!#}"
 printf '%s' "$task" >"$TEST_AGENT_TASK_FILE"
-printf 'worker-status %s\n' "$(cat "$XDG_STATE_HOME/omarchy-wallpaper-agent/status")" >>"$TEST_LOG"
-jq -r '"activity \(.working) \(.mode) \(.recordId)"' \
-  "$XDG_STATE_HOME/omarchy-wallpaper-agent/activity.json" >>"$TEST_LOG"
+printf 'worker-status %s\n' "$(cat "$XDG_STATE_HOME/omarchy-wallsmith/status")" >>"$TEST_LOG"
+jq -r '.[0] | "activity \(.mode) \(.recordId)"' \
+  "$XDG_STATE_HOME/omarchy-wallsmith/activity.json" >>"$TEST_LOG"
+jq -r '"activity-count \(length)"' \
+  "$XDG_STATE_HOME/omarchy-wallsmith/activity.json" >>"$TEST_LOG"
 output_path=$(sed -n 's/^After .*copy it to this exact path: //p' <<<"$task" | sed -n '1p')
 fixture=$TEST_FIXTURE
 if [[ ${2:-} == resume ]]; then
@@ -101,15 +109,15 @@ mapfile -t wallpapers < <(find "$fake_home/.config/omarchy/backgrounds/retro-82"
 grep -F "omarchy theme bg set ${wallpapers[0]}" "$test_log" >/dev/null
 grep -F "Wallpaper ready" "$test_log" >/dev/null
 grep -F "worker-status working" "$test_log" >/dev/null
-grep -Fx "activity true generate " "$test_log" >/dev/null
+grep -Fx "activity generate " "$test_log" >/dev/null
 grep -Fx "codex-arg=notify=[]" "$test_log" >/dev/null
-grep -Fx "idle" "$fake_home/.local/state/omarchy-wallpaper-agent/status" >/dev/null
-[[ ! -e "$fake_home/.local/state/omarchy-wallpaper-agent/activity.json" ]] || {
+grep -Fx "idle" "$fake_home/.local/state/omarchy-wallsmith/status" >/dev/null
+[[ ! -e "$fake_home/.local/state/omarchy-wallsmith/activity.json" ]] || {
   echo "Generation activity was not cleared" >&2
   exit 1
 }
 
-mapfile -t records < <(find "$fake_home/.local/state/omarchy-wallpaper-agent/records" -maxdepth 1 -type f -name '*.json')
+mapfile -t records < <(find "$fake_home/.local/state/omarchy-wallsmith/records" -maxdepth 1 -type f -name '*.json')
 [[ ${#records[@]} -eq 1 ]] || { echo "Expected one history record" >&2; exit 1; }
 record_id=$(jq -r '.recordId' "${records[0]}")
 jq -e '
@@ -136,7 +144,7 @@ grep -F 'Use $imagegen exactly once to edit the attached desktop wallpaper.' "$a
 grep -F 'Requested change' "$agent_task_file" >/dev/null
 grep -Fx 'codex-arg=resume' "$test_log" >/dev/null
 grep -Fx "codex-arg=--image=${wallpapers[0]}" "$test_log" >/dev/null
-grep -Fx "activity true refine $record_id" "$test_log" >/dev/null
+grep -Fx "activity refine $record_id" "$test_log" >/dev/null
 jq -e '
   .lastInstruction == "Make the sunrise warmer"
   and (.turns | length) == 2
@@ -144,11 +152,11 @@ jq -e '
 ' "${records[0]}" >/dev/null
 session_workspace=$(jq -r '.workspace' "${records[0]}")
 [[ ! -e "$session_workspace/generated.png" ]] || { echo "Temporary source image was not cleaned up" >&2; exit 1; }
-mapfile -t refresh_links < <(find "$fake_home/.local/state/omarchy-wallpaper-agent/background-refresh" -maxdepth 1 -type l)
+mapfile -t refresh_links < <(find "$fake_home/.local/state/omarchy-wallsmith/background-refresh" -maxdepth 1 -type l)
 [[ ${#refresh_links[@]} -eq 1 ]] || { echo "Expected one live background refresh link" >&2; exit 1; }
 [[ $(readlink "${refresh_links[0]}") == "${wallpapers[0]}" ]] || { echo "Refresh link points at the wrong wallpaper" >&2; exit 1; }
 grep -F "omarchy-shell -q background set ${refresh_links[0]}" "$test_log" >/dev/null
-[[ ! -e "$fake_home/.local/state/omarchy-wallpaper-agent/activity.json" ]] || {
+[[ ! -e "$fake_home/.local/state/omarchy-wallsmith/activity.json" ]] || {
   echo "Refinement activity was not cleared" >&2
   exit 1
 }
@@ -167,10 +175,12 @@ if grep -Fq 'Current Omarchy theme' "$agent_task_file"; then
   echo "Disabled theme context leaked into the agent task" >&2
   exit 1
 fi
-grep -Fx "idle" "$fake_home/.local/state/omarchy-wallpaper-agent/status" >/dev/null
+grep -Fx "idle" "$fake_home/.local/state/omarchy-wallsmith/status" >/dev/null
 
-codex_calls_before=$(grep -c '^codex-arg=exec$' "$test_log")
-exec 8>"$fake_home/.local/state/omarchy-wallpaper-agent/generate.lock"
+# Refining a record that is already being edited must be refused by the
+# per-record lock.
+resume_calls_before=$(grep -c '^codex-arg=resume$' "$test_log")
+exec 8>"$fake_home/.local/state/omarchy-wallsmith/records/$record_id.lock"
 flock -n 8
 HOME="$fake_home" \
 XDG_STATE_HOME="$fake_home/.local/state" \
@@ -179,14 +189,70 @@ TEST_FIXTURE="$fixture" \
 TEST_REFINE_FIXTURE="$refine_fixture" \
 TEST_LOG="$test_log" \
 TEST_AGENT_TASK_FILE="$agent_task_file" \
-  "$plugin_dir/bin/generate-wallpaper" --prompt "Must not start" 8>&-
+  "$plugin_dir/bin/generate-wallpaper" --refine "$record_id" --prompt "Must not start" 8>&-
 flock -u 8
 exec 8>&-
-codex_calls_after=$(grep -c '^codex-arg=exec$' "$test_log")
-[[ $codex_calls_before -eq $codex_calls_after ]] || {
-  echo "A second Codex process started while the global lock was held" >&2
+resume_calls_after=$(grep -c '^codex-arg=resume$' "$test_log")
+[[ $resume_calls_before -eq $resume_calls_after ]] || {
+  echo "A second edit started while the record lock was held" >&2
   exit 1
 }
-grep -F "Wallpaper already generating" "$test_log" >/dev/null
+grep -F "Wallpaper edit already running" "$test_log" >/dev/null
+
+# Two new generations must run in parallel: gate the fake codex, start both,
+# and require both to be registered as running at the same time.
+activity_file="$fake_home/.local/state/omarchy-wallsmith/activity.json"
+status_file="$fake_home/.local/state/omarchy-wallsmith/status"
+gate="$test_root/codex-gate"
+wallpapers_before_parallel=$(find "$fake_home/.config/omarchy/backgrounds" -type f -name 'ai-*.jpg' | wc -l)
+
+HOME="$fake_home" \
+XDG_STATE_HOME="$fake_home/.local/state" \
+PATH="$fake_bin:/usr/bin:/bin" \
+TEST_FIXTURE="$fixture" \
+TEST_REFINE_FIXTURE="$refine_fixture" \
+TEST_LOG="$test_log" \
+TEST_AGENT_TASK_FILE="$agent_task_file" \
+TEST_CODEX_GATE="$gate" \
+  "$plugin_dir/bin/generate-wallpaper" --prompt "Parallel one" &
+parallel_pid_one=$!
+
+HOME="$fake_home" \
+XDG_STATE_HOME="$fake_home/.local/state" \
+PATH="$fake_bin:/usr/bin:/bin" \
+TEST_FIXTURE="$fixture" \
+TEST_REFINE_FIXTURE="$refine_fixture" \
+TEST_LOG="$test_log" \
+TEST_AGENT_TASK_FILE="$agent_task_file" \
+TEST_CODEX_GATE="$gate" \
+  "$plugin_dir/bin/generate-wallpaper" --prompt "Parallel two" &
+parallel_pid_two=$!
+
+running_jobs=0
+for _ in $(seq 1 200); do
+  running_jobs=$(jq 'length' "$activity_file" 2>/dev/null || echo 0)
+  [[ $running_jobs == 2 ]] && break
+  sleep 0.05
+done
+[[ $running_jobs == 2 ]] || {
+  touch "$gate"
+  wait "$parallel_pid_one" "$parallel_pid_two" || true
+  echo "Expected two jobs registered in parallel, saw $running_jobs" >&2
+  exit 1
+}
+grep -Fx "working" "$status_file" >/dev/null
+
+touch "$gate"
+wait "$parallel_pid_one"
+wait "$parallel_pid_two"
+
+grep -Fx "activity-count 2" "$test_log" >/dev/null
+wallpapers_after_parallel=$(find "$fake_home/.config/omarchy/backgrounds" -type f -name 'ai-*.jpg' | wc -l)
+[[ $((wallpapers_before_parallel + 2)) -eq $wallpapers_after_parallel ]] || {
+  echo "Parallel generations did not produce two wallpapers" >&2
+  exit 1
+}
+[[ ! -e $activity_file ]] || { echo "Parallel activity was not cleared" >&2; exit 1; }
+grep -Fx "idle" "$status_file" >/dev/null
 
 echo "worker integration test: ok"

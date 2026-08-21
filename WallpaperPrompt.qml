@@ -438,6 +438,21 @@ Item {
     root.focusPrompt()
   }
 
+  function createTheme(index) {
+    if (index < 0 || index >= historyModel.count)
+      return
+    var entry = historyModel.get(index)
+    if (entry.pending || !entry.recordId) {
+      root.showError("Still generating — a theme needs the finished wallpaper")
+      return
+    }
+    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    if (!sourceDir)
+      return
+    Quickshell.execDetached([sourceDir + "/bin/create-theme", entry.recordId])
+    root.dismiss()
+  }
+
   function applyWallpaper(index) {
     if (index < 0 || index >= historyModel.count)
       return
@@ -980,6 +995,9 @@ Item {
               } else if (event.key === Qt.Key_Delete) {
                 root.requestRowAction(historyList.currentIndex)
                 event.accepted = true
+              } else if (event.key === Qt.Key_T && (event.modifiers & Qt.AltModifier) !== 0) {
+                root.createTheme(historyList.currentIndex)
+                event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if ((event.modifiers & Qt.AltModifier) !== 0)
                   root.applyWallpaper(historyList.currentIndex)
@@ -1122,7 +1140,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: root.inlineError !== "" ? root.inlineError
               : historyList.activeFocus
-                ? "Return refine  ·  Alt+Return apply  ·  Shift+Return reuse  ·  Del delete  ·  Esc"
+                ? "Return refine  ·  Alt+Return apply  ·  Alt+T theme  ·  Shift+Return reuse  ·  Del delete  ·  Esc"
               : root.refineActive
                 ? "Return applies the edit  ·  Alt+Return newline"
                   + (root.refineVersions.length > 1 ? "  ·  Alt+←/→ versions" : "  ·  Ctrl+T theme")

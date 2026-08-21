@@ -41,6 +41,18 @@ fi
 printf 'codex-arg=%s\n' "$@" >>"$TEST_LOG"
 task="${!#}"
 printf '%s' "$task" >"$TEST_AGENT_TASK_FILE"
+if [[ $task == *"Design an Omarchy desktop theme palette"* ]]; then
+  args=("$@")
+  out=""
+  for ((i = 0; i < ${#args[@]}; i++)); do
+    [[ ${args[i]} == --output-last-message ]] && out=${args[i + 1]}
+  done
+  cat >"$out" <<'JSON'
+{"name": "Test Lagoon", "mode": "dark", "colors": {"accent": "#89b4fa", "selection": "#45475a", "muted": "#585b70", "background": "#1e1e2e", "dark_background": "#161622", "darker_background": "#101019", "lighter_background": "#313244", "foreground": "#cdd6f4", "dark_foreground": "#6c7086", "light_foreground": "#bac2de", "bright_foreground": "#cdd6f4", "red": "#f38ba8", "yellow": "#f9e2af", "orange": "#f6b6ab", "green": "#a6e3a1", "cyan": "#94e2d5", "blue": "#89b4fa", "magenta": "#f5c2e7", "brown": "#7b5b55", "bright_red": "#f38ba8", "bright_yellow": "#f9e2af", "bright_green": "#a6e3a1", "bright_cyan": "#94e2d5", "bright_blue": "#89b4fa", "bright_magenta": "#f5c2e7"}}
+JSON
+  printf '%s\n' '{"type":"thread.started","thread_id":"theme-thread"}'
+  exit 0
+fi
 printf 'worker-status %s\n' "$(cat "$XDG_STATE_HOME/omarchy-wallsmith/status")" >>"$TEST_LOG"
 jq -r '.[0] | "activity \(.mode) \(.recordId)"' \
   "$XDG_STATE_HOME/omarchy-wallsmith/activity.json" >>"$TEST_LOG"
@@ -201,6 +213,34 @@ if grep -Fq 'Current Omarchy theme' "$agent_task_file"; then
   exit 1
 fi
 grep -Fx "idle" "$fake_home/.local/state/omarchy-wallsmith/status" >/dev/null
+
+# Theme creation: candidates from the image, palette from the (fake) agent,
+# theme directory written, trial-applied, then discarded cleanly.
+HOME="$fake_home" \
+XDG_STATE_HOME="$fake_home/.local/state" \
+PATH="$fake_bin:/usr/bin:/bin" \
+TEST_LOG="$test_log" \
+TEST_AGENT_TASK_FILE="$agent_task_file" \
+  "$plugin_dir/bin/create-theme" "$record_id"
+
+theme_dir="$fake_home/.config/omarchy/themes/test-lagoon"
+[[ -d $theme_dir ]] || { echo "Theme directory was not created" >&2; exit 1; }
+grep -q 'mode = "dark"' "$theme_dir/colors.toml"
+grep -q 'accent = "#89b4fa"' "$theme_dir/colors.toml"
+grep -q 'bright_magenta = "#f5c2e7"' "$theme_dir/colors.toml"
+[[ -f "$theme_dir/backgrounds/1-test-lagoon.jpg" ]] || { echo "Theme wallpaper missing" >&2; exit 1; }
+[[ -f "$theme_dir/preview.png" ]] || { echo "Theme preview missing" >&2; exit 1; }
+grep -F 'Dominant colors extracted from the image' "$agent_task_file" >/dev/null
+grep -F "omarchy theme set test-lagoon" "$test_log" >/dev/null
+grep -F "discard-theme test-lagoon retro-82" "$test_log" >/dev/null
+jq -e '.generatedThemes == ["test-lagoon"]' "${records[0]}" >/dev/null
+
+HOME="$fake_home" \
+PATH="$fake_bin:/usr/bin:/bin" \
+TEST_LOG="$test_log" \
+  "$plugin_dir/bin/discard-theme" test-lagoon retro-82
+[[ ! -d $theme_dir ]] || { echo "Discarded theme directory still exists" >&2; exit 1; }
+grep -F "omarchy theme set retro-82" "$test_log" >/dev/null
 
 # Refining a record that is already being edited must be refused by the
 # per-record lock.

@@ -1,0 +1,25 @@
+#!/bin/bash
+
+set -euo pipefail
+
+slug="${1:-}"
+previous_slug="${2:-}"
+if [[ ! $slug =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "Usage: discard-theme <slug> [previous-slug]" >&2
+  exit 2
+fi
+
+theme_dir="$HOME/.config/omarchy/themes/$slug"
+[[ -d $theme_dir ]] || exit 0
+
+# Switch away first so we never delete the active theme out from under the
+# shell, then remove our generated directory directly (it is user-owned).
+if [[ $previous_slug =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  omarchy theme set "$previous_slug" >/dev/null 2>&1 || true
+fi
+rm -rf "$theme_dir"
+
+if command -v omarchy-notification-send >/dev/null 2>&1; then
+  omarchy-notification-send "Theme discarded" "Removed $slug" >/dev/null 2>&1 || true
+fi
+printf 'Discarded theme %s\n' "$slug"

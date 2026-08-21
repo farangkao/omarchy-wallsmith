@@ -29,6 +29,9 @@ Item {
   property string confirmTargetId: ""
   property string confirmMessage: ""
 
+  property bool actionMenuOpen: false
+  property int actionRowIndex: -1
+
   property string refineRecordId: ""
   property string refinePrompt: ""
   property string refineImage: ""
@@ -37,8 +40,6 @@ Item {
   property int refineVersionIndex: -1
   readonly property var refineSelected: refineVersionIndex >= 0 && refineVersionIndex < refineVersions.length
     ? refineVersions[refineVersionIndex] : null
-  readonly property var refineEditsShown: refineEdits.slice(-3)
-  readonly property int refineEditsHidden: Math.max(0, refineEdits.length - 3)
   readonly property bool refineActive: refineRecordId !== ""
 
   property string inlineError: ""
@@ -438,6 +439,54 @@ Item {
     root.focusPrompt()
   }
 
+  function openRowActions(index) {
+    if (index < 0 || index >= historyModel.count)
+      return
+    var row = historyModel.get(index)
+    historyList.currentIndex = index
+    var items = []
+    if (row.pending) {
+      items.push({ label: "Reuse prompt", kbd: "Shift+Return", action: "reuse" })
+      items.push({ label: "Cancel generation", kbd: "Del", action: "rowAction" })
+    } else {
+      items.push({ label: root.refineRecordId === row.recordId ? "Stop refining" : "Refine", kbd: "", action: "refine" })
+      items.push({ label: "Apply as background", kbd: "Alt+Return", action: "apply" })
+      items.push({ label: "Reuse prompt", kbd: "Shift+Return", action: "reuse" })
+      items.push({ label: "Create theme", kbd: "Alt+T", action: "theme" })
+      items.push({ label: row.working ? "Cancel edit" : "Delete", kbd: "Del", action: "rowAction" })
+    }
+    actionMenu.items = items
+    actionMenu.selectedIndex = 0
+    actionMenu.title = row.prompt
+    root.actionRowIndex = index
+    root.actionMenuOpen = true
+  }
+
+  function closeActionMenu() {
+    root.actionMenuOpen = false
+    Qt.callLater(function() {
+      if (historyModel.count > 0)
+        historyList.forceActiveFocus()
+      else
+        root.focusPrompt()
+    })
+  }
+
+  function runRowAction(action) {
+    var index = root.actionRowIndex
+    root.actionMenuOpen = false
+    if (action === "refine")
+      root.setRefineTarget(index)
+    else if (action === "apply")
+      root.applyWallpaper(index)
+    else if (action === "reuse")
+      root.reusePrompt(index)
+    else if (action === "theme")
+      root.createTheme(index)
+    else if (action === "rowAction")
+      root.requestRowAction(index)
+  }
+
   function createTheme(index) {
     if (index < 0 || index >= historyModel.count)
       return
@@ -664,6 +713,127 @@ Item {
         onConfirmed: root.executeConfirm()
       }
 
+      Item {
+        id: actionMenu
+        anchors.fill: parent
+        z: 15
+        visible: root.actionMenuOpen
+
+        property var items: []
+        property int selectedIndex: 0
+        property string title: ""
+
+        function handleKey(event) {
+          if (!root.actionMenuOpen)
+            return false
+          if (event.key === Qt.Key_Escape) {
+            root.closeActionMenu()
+            return true
+          }
+          if (event.key === Qt.Key_Up || (event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
+            actionMenu.selectedIndex = (actionMenu.selectedIndex + actionMenu.items.length - 1) % actionMenu.items.length
+            return true
+          }
+          if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab) {
+            actionMenu.selectedIndex = (actionMenu.selectedIndex + 1) % actionMenu.items.length
+            return true
+          }
+          if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+            root.runRowAction(actionMenu.items[actionMenu.selectedIndex].action)
+            return true
+          }
+          return false
+        }
+
+        Rectangle {
+          anchors.fill: parent
+          color: root.scrim
+
+          MouseArea { anchors.fill: parent; onClicked: root.closeActionMenu() }
+        }
+
+        BorderSurface {
+          id: actionCard
+          width: Math.min(Style.space(320), parent.width - Style.space(24))
+          height: actionColumn.implicitHeight + actionCard.contentTopInset + actionCard.contentBottomInset
+          anchors.centerIn: parent
+          color: root.background
+          borderSpec: Border.flat(root.selectedText, Style.normalBorderWidth)
+          radius: root.cornerRadius
+          padding: Style.spacing.md
+
+          MouseArea { anchors.fill: parent; onClicked: {} }
+
+          Column {
+            id: actionColumn
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.topMargin: actionCard.contentTopInset
+            anchors.leftMargin: actionCard.contentLeftInset
+            anchors.rightMargin: actionCard.contentRightInset
+            spacing: Style.spacing.xxs
+
+            Text {
+              width: parent.width
+              text: actionMenu.title
+              textFormat: Text.PlainText
+              color: root.foreground
+              opacity: 0.55
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              bottomPadding: Style.spacing.sm
+            }
+
+            Repeater {
+              model: actionMenu.items
+
+              Rectangle {
+                required property int index
+                required property var modelData
+
+                readonly property bool isSelected: index === actionMenu.selectedIndex
+
+                width: actionColumn.width
+                height: Style.space(30)
+                radius: root.cornerRadius
+                color: isSelected ? root.selectedBackground : "transparent"
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.spacing.md
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: modelData.label
+                  color: parent.isSelected ? root.selectedText : root.foreground
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.spacing.md
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: modelData.kbd
+                  color: root.foreground
+                  opacity: 0.45
+                  font.family: Style.font.menuFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onEntered: actionMenu.selectedIndex = parent.index
+                  onClicked: root.runRowAction(parent.modelData.action)
+                }
+              }
+            }
+          }
+        }
+      }
+
       Column {
         id: content
         anchors.top: parent.top
@@ -760,6 +930,11 @@ Item {
             selectByMouse: true
 
             Keys.onPressed: function(event) {
+              if (root.actionMenuOpen) {
+                if (actionMenu.handleKey(event))
+                  event.accepted = true
+                return
+              }
               if (root.confirmAction !== "") {
                 if (confirmDialog.handleKey(event))
                   event.accepted = true
@@ -921,31 +1096,21 @@ Item {
             }
 
             Text {
-              visible: root.refineEditsHidden > 0
+              visible: root.refineVersions.length <= 1 && root.refineEdits.length > 0
               width: parent.width
               leftPadding: refineStrip.textIndent
-              text: "+" + root.refineEditsHidden + " earlier " + (root.refineEditsHidden === 1 ? "edit" : "edits")
+              text: root.refineEdits.length > 0
+                ? "✎  " + root.refineEdits[root.refineEdits.length - 1].instruction
+                  + (root.refineEdits[root.refineEdits.length - 1].at
+                    ? "  ·  " + root.formatWhen(root.refineEdits[root.refineEdits.length - 1].at)
+                    : "")
+                : ""
+              textFormat: Text.PlainText
               color: root.foreground
-              opacity: 0.45
+              opacity: 0.7
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.caption
-            }
-
-            Repeater {
-              model: root.refineEditsShown
-
-              Text {
-                width: stripColumn.width
-                leftPadding: refineStrip.textIndent
-                text: "✎  " + modelData.instruction
-                  + (modelData.at ? "  ·  " + root.formatWhen(modelData.at) : "")
-                textFormat: Text.PlainText
-                color: root.foreground
-                opacity: 0.7
-                font.family: Style.font.menuFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-              }
+              elide: Text.ElideRight
             }
           }
         }
@@ -975,6 +1140,11 @@ Item {
             keyNavigationWraps: false
 
             Keys.onPressed: function(event) {
+              if (root.actionMenuOpen) {
+                if (actionMenu.handleKey(event))
+                  event.accepted = true
+                return
+              }
               if (root.confirmAction !== "") {
                 if (confirmDialog.handleKey(event))
                   event.accepted = true
@@ -1004,7 +1174,7 @@ Item {
                 else if ((event.modifiers & Qt.ShiftModifier) !== 0)
                   root.reusePrompt(historyList.currentIndex)
                 else
-                  root.setRefineTarget(historyList.currentIndex)
+                  root.openRowActions(historyList.currentIndex)
                 event.accepted = true
               } else if (event.text && event.text.length === 1
                   && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
@@ -1119,10 +1289,7 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                  historyList.currentIndex = index
-                  root.setRefineTarget(index)
-                }
+                onClicked: root.openRowActions(index)
               }
             }
           }
@@ -1140,12 +1307,12 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: root.inlineError !== "" ? root.inlineError
               : historyList.activeFocus
-                ? "Return refine  ·  Alt+Return apply  ·  Alt+T theme  ·  Shift+Return reuse  ·  Del delete  ·  Esc"
+                ? "Return actions  ·  Tab prompt  ·  Esc"
               : root.refineActive
                 ? "Return applies the edit  ·  Alt+Return newline"
-                  + (root.refineVersions.length > 1 ? "  ·  Alt+←/→ versions" : "  ·  Ctrl+T theme")
-                  + "  ·  Esc back to new"
-                : "Return generates  ·  Alt+Return newline  ·  Ctrl+T theme"
+                  + (root.refineVersions.length > 1 ? "  ·  Alt+←/→ versions" : "")
+                  + "  ·  Esc back"
+                : "Return generates  ·  Alt+Return newline"
                   + (historyModel.count > 0 ? "  ·  Tab history" : "")
                   + "  ·  Esc"
             textFormat: Text.PlainText

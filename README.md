@@ -2,9 +2,9 @@
 
 Generate, revisit, and refine AI wallpapers for [Omarchy](https://omarchy.org) — theme-aware, crop-safe, keyboard-first.
 
-![The Wallsmith card: prompt on top, generated wallpaper history below](assets/wallsmith-card.jpg)
+![The Wallsmith card over the wallpaper its prompt generated, on the Kanagawa theme](assets/wallsmith-card.jpg)
 
-Made with Wallsmith on the **Kanagawa** theme, from the prompt *“A samurai frog about to battle a dragon. Drawn in traditional japanese style”*:
+The wallpaper behind that card is the prompt in it — made with Wallsmith on the **Kanagawa** theme:
 
 ![A samurai frog about to battle a dragon, in traditional Japanese style](assets/example-kanagawa.jpg)
 
@@ -46,19 +46,21 @@ In the prompt:
 | `Tab` / `Down` | Move into history |
 | `Esc` | Back out, then close |
 
-On a wallpaper in history:
+On a wallpaper in history, `Return` (or a click) opens its action menu — each action also has a direct shortcut, shown in the menu:
 
-| Key | Action |
-|-----|--------|
-| `Return` / click | Refine it — edits continue in that wallpaper's own agent thread |
-| `Alt+Return` | Apply it as your background |
-| `Shift+Return` | Reuse its prompt for a new wallpaper |
-| `Alt+T` | Create a matching Omarchy theme from it |
-| `Delete` | Delete it — or cancel its running job |
+![The action menu on a history row](assets/wallsmith-actions.jpg)
 
-![Refining a wallpaper: the strip shows its thumbnail, original prompt, and past edits](assets/wallsmith-refine.jpg)
+| Action | Shortcut |
+|--------|----------|
+| Refine it — edits continue in that wallpaper's own agent thread | menu |
+| Apply it as your background | `Alt+Return` |
+| Reuse its prompt for a new wallpaper | `Shift+Return` |
+| Create a matching Omarchy theme from it | `Alt+T` |
+| Delete it — or cancel its running job | `Delete` |
 
-While refining, the strip shows the wallpaper, its prompt, and your past edit instructions. Refinements replace the wallpaper's file — one slot per generation, however many edits — but the last five versions are kept: browse them with `Alt+←/→` (or click the thumbnail) and restore one with `Ctrl+Return`. A restore is itself undoable.
+![Refining the current wallpaper: the strip shows its thumbnail, original prompt, and last edit](assets/wallsmith-refine.jpg)
+
+While refining, the strip shows the wallpaper, its prompt, and your latest edit instruction. Refinements replace the wallpaper's file — one slot per generation, however many edits — but the last five versions are kept: browse them with `Alt+←/→` (or click the thumbnail) and restore one with `Ctrl+Return`. A restore is itself undoable.
 
 `Alt+T` turns a wallpaper into a full Omarchy theme: the palette is extracted from the pixels, the agent assigns roles and names the theme from the image and your prompt, contrast is validated, and the theme is applied immediately with the wallpaper bundled in. Keep it by doing nothing; click the notification to discard it and return to your previous theme. Remove one later with `omarchy theme remove <name>`. For hands-on palette tuning with sliders and presets, see [aether](https://github.com/bjarneo/aether).
 

@@ -16,7 +16,7 @@ o.bind(
 )
 ```
 
-Then reload Hyprland with `omarchy-restart-hyprland` and press `Super+Ctrl+G`.
+Then reload Hyprland with `hyprctl reload` and press `Super+Ctrl+G`.
 
 You can optionally prefill the prompt:
 

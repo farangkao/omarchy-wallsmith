@@ -1,48 +1,61 @@
-# Wallpaper Agent for Omarchy
+# Wallsmith
 
-Open a native Omarchy prompt, describe a wallpaper, and let Codex generate and apply it in the background using the current theme's palette.
+Generate, revisit, and refine AI wallpapers for [Omarchy](https://omarchy.org) — theme-aware, crop-safe, and keyboard-first. Describe a wallpaper in a native Omarchy prompt and Wallsmith generates and applies it in the background, matched to your current theme's palette.
 
-This repository is currently a local preview. It has not been published and its final name is still open.
+![The Wallsmith card: prompt on top, generated wallpaper history below](assets/wallsmith-card.jpg)
 
-## Use
+Select a wallpaper to refine it in its original thread — with your previous edit instructions in view:
 
-Bind the bundled launcher to a key in `~/.config/hypr/bindings.lua`:
+![Refining a wallpaper: the strip shows its thumbnail, original prompt, and past edits](assets/wallsmith-refine.jpg)
+
+## Requirements
+
+- Omarchy 4 with `omarchy-shell`
+- [Codex CLI](https://github.com/openai/codex), signed in (no API key needed — image generation counts against your Codex usage limits)
+- `hyprctl`, `jq`, ImageMagick, and `flock` (all present on a stock Omarchy install)
+
+## Install
+
+```bash
+omarchy plugin add https://github.com/jlugner/omarchy-wallsmith.git --enable
+```
+
+Then bind the launcher to a key in `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind(
   "SUPER + CTRL + G",
   "Generate wallpaper",
-  "$HOME/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper"
+  "$HOME/.config/omarchy/plugins/jesperlugner.wallsmith/bin/wallsmith"
 )
 ```
 
-Then reload Hyprland with `hyprctl reload`.
+Reload Hyprland with `hyprctl reload`.
 
-`Super+Ctrl+G` opens the wallpaper prompt. Use `Ctrl+Tab` or the header control to move between a new prompt and generated wallpaper history.
+## Use
 
-You can optionally prefill the prompt:
+`Super+Ctrl+G` opens the Wallsmith card: a multiline prompt on top, and your generated wallpaper history directly below it.
+
+**Writing a prompt:** `Return` generates, `Alt+Return` inserts a newline, `Esc` closes. Theme matching is on by default and controlled by the `Match theme` toggle in the footer — click it or press `Ctrl+T`; `Shift+Return` submits once without theme context regardless of the toggle.
+
+**History:** move into the list with `Tab` (or `Down` from the last line of the prompt) and back with `Tab` or `Up` from the top row. On a wallpaper:
+
+- `Return` (or click) selects it for **refinement**: a strip above the history shows its thumbnail, original prompt, and previous edit instructions, and your next `Return` sends the edit to that wallpaper's existing thread. `Esc` backs out.
+- `Alt+Return` **applies** it as your background again.
+- `Shift+Return` **reuses** its original prompt for a fresh generation.
+- `Delete` **deletes** the wallpaper and its history (with confirmation) — or cancels the job if the row is still generating or being edited.
+
+Refinements replace the selected wallpaper file instead of creating another image, so each original generation occupies one wallpaper slot no matter how many times it is refined. Rows show their edit count, and deleting the wallpaper you're currently using switches to the next background automatically.
+
+**Parallel jobs:** up to four jobs run at once. New generations run side by side and show as live rows at the top of the history; reusing a prompt starts a fresh thread immediately even while the source is still generating. Each wallpaper accepts one edit at a time (an edit resumes that wallpaper's session and replaces its file). Whichever job finishes last sets the visible background. While jobs run, an animated `Generating` indicator appears in the top bar (`Generating ×N` for several).
+
+**CLI:** the launcher accepts a prompt to prefill, and flags:
 
 ```bash
-~/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper \
-  "A quiet Japanese garden in the rain"
+bin/wallsmith "A quiet Japanese garden in the rain"
+bin/wallsmith --no-theme-context "A warm desert at noon"
+bin/wallsmith --history
 ```
-
-Theme matching is enabled by default. To ignore the current theme for one generation:
-
-```bash
-~/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper \
-  --no-theme-context "A warm desert at noon"
-```
-
-The current backend is Codex.
-
-The prompt wraps onto multiple lines and grows with its contents. Press `Alt+Return` to insert a newline, `Return` to generate with the current theme, `Shift+Return` to generate without theme context, or `Esc` to close it.
-
-In history, use the arrow keys to choose a wallpaper. Press `Return` to describe an edit in its existing Codex thread, or `Shift+Return` to copy its original prompt into a new-generation prompt. Refinements replace the selected wallpaper file instead of creating another image. Each original generation therefore occupies one wallpaper slot no matter how many times it is refined.
-
-Every original generation starts a new Codex thread; refinements resume the selected thread. Only one generation or refinement can run at a time. The active history row is marked `Editing…`, and both new prompts and other edits stay locked until that job finishes.
-
-While a generation is running, a small animated `Generating` indicator appears in the top bar. It disappears completely when the worker finishes or stops.
 
 ## How it works
 
@@ -53,22 +66,22 @@ While a generation is running, a small animated `Generating` indicator appears i
 5. It stores the JPEG in `~/.config/omarchy/backgrounds/<current-theme>/`.
 6. It applies the image with `omarchy theme bg set` and sends a notification.
 
-For refinements, the plugin resumes the exact saved Codex session and attaches the current wallpaper as the editing reference. Conversation context preserves the intent; the attachment preserves the actual pixels. The selected JPEG is then replaced atomically, and the live shell receives a cache-busted path so the updated pixels appear immediately. Prompts, session metadata, and per-turn log paths are kept under `~/.local/state/omarchy-wallpaper-agent/records/`, while detailed job logs remain under `jobs/`.
+For refinements, the plugin resumes the exact saved Codex session and attaches the current wallpaper as the editing reference. Conversation context preserves the intent; the attachment preserves the actual pixels. The selected JPEG is then replaced atomically, and the live shell receives a cache-busted path so the updated pixels appear immediately.
 
 Omarchy currently uses one shared background and center-crops it independently on each monitor. Mixed portrait and landscape displays therefore share a crop-safe master rather than receiving separate images.
 
-No API key is needed for the default backend. Codex reuses the saved CLI login, and image generation counts against the Codex usage limits. The background invocation disables the user's normal Codex completion hook so only the plugin's progress and completion notifications appear. Job logs live under `~/.local/state/omarchy-wallpaper-agent/jobs/`.
-
-## Requirements
-
-- Omarchy 4 with `omarchy-shell`
-- Codex CLI, signed in
-- `hyprctl`, `jq`, ImageMagick, and `flock`
+State lives under `~/.local/state/omarchy-wallsmith/`: prompts, session metadata, and per-turn log paths in `records/`, detailed job logs in `jobs/` (pruned after 30 days when no record references them), and the live job list in `activity.json`. The background invocation disables the user's normal Codex completion hook so only the plugin's progress and completion notifications appear.
 
 ## Verify
 
 ```bash
-omarchy plugin validate ~/.config/omarchy/plugins/jesperlugner.wallpaper-agent
-~/.config/omarchy/plugins/jesperlugner.wallpaper-agent/tests/test-launcher.sh
-~/.config/omarchy/plugins/jesperlugner.wallpaper-agent/tests/test-worker.sh
+omarchy plugin validate ~/.config/omarchy/plugins/jesperlugner.wallsmith
+~/.config/omarchy/plugins/jesperlugner.wallsmith/tests/test-launcher.sh
+~/.config/omarchy/plugins/jesperlugner.wallsmith/tests/test-worker.sh
 ```
+
+The same checks run in CI on every push.
+
+## License
+
+[MIT](LICENSE)

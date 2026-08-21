@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm jq imagemagick git util-linux
+
+      - uses: actions/checkout@v4
+
+      - name: Syntax-check scripts
+        run: bash -n bin/* tests/*.sh
+
+      - name: Manifest sanity check
+        run: |
+          jq -e '
+            .schemaVersion == 1
+            and .id == "jesperlugner.wallsmith"
+            and (.version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            and (.entryPoints.overlay | length > 0)
+            and (.entryPoints.barWidget | length > 0)
+          ' manifest.json
+
+      - name: Launcher integration test
+        run: tests/test-launcher.sh
+
+      - name: Worker integration test
+        run: tests/test-worker.sh

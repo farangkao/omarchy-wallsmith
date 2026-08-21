@@ -877,6 +877,7 @@ Item {
                 Text {
                   width: parent.width
                   text: root.refinePrompt
+                  textFormat: Text.PlainText
                   color: root.foreground
                   opacity: 0.8
                   font.family: Style.font.menuFamily
@@ -896,6 +897,7 @@ Item {
                     ? "Current version"
                     : root.refineSelected.label + "  ·  Ctrl+Return restores")
                 : ""
+              textFormat: Text.PlainText
               color: root.refineSelected && !root.refineSelected.isCurrent ? root.accentColor : root.foreground
               opacity: root.refineSelected && !root.refineSelected.isCurrent ? 0.95 : 0.55
               font.family: Style.font.menuFamily
@@ -922,6 +924,7 @@ Item {
                 leftPadding: refineStrip.textIndent
                 text: "✎  " + modelData.instruction
                   + (modelData.at ? "  ·  " + root.formatWhen(modelData.at) : "")
+                textFormat: Text.PlainText
                 color: root.foreground
                 opacity: 0.7
                 font.family: Style.font.menuFamily
@@ -1065,6 +1068,7 @@ Item {
                 Text {
                   width: parent.width
                   text: model.prompt
+                  textFormat: Text.PlainText
                   color: row.hasCursor ? root.selectedText : root.foreground
                   font.family: Style.font.menuFamily
                   font.pixelSize: Style.font.body
@@ -1083,6 +1087,7 @@ Item {
                         + (model.editCount > 0
                           ? "  ·  " + model.editCount + (model.editCount === 1 ? " edit" : " edits")
                           : "")
+                  textFormat: Text.PlainText
                   color: (model.pending || model.working) ? root.accentColor : root.foreground
                   opacity: (model.pending || model.working) ? 0.9 : 0.55
                   font.family: Style.font.menuFamily
@@ -1125,6 +1130,7 @@ Item {
                 : "Return generates  ·  Alt+Return newline  ·  Ctrl+T theme"
                   + (historyModel.count > 0 ? "  ·  Tab history" : "")
                   + "  ·  Esc"
+            textFormat: Text.PlainText
             color: root.inlineError !== "" ? Color.urgent : root.foreground
             opacity: root.inlineError !== "" ? 1 : 0.55
             font.family: Style.font.menuFamily

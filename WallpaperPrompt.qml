@@ -1,4 +1,5 @@
 import Quickshell
+import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 import qs.Commons
@@ -13,9 +14,16 @@ Item {
 
   property bool opened: false
   property string viewMode: "new"
+  property string draftViewMode: "new"
   property string initialPrompt: ""
   property string selectedRecordId: ""
   property bool themeContextEnabled: true
+  property bool workerBusy: false
+  property string activeMode: ""
+  property string activeRecordId: ""
+
+  readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state"
+  readonly property string activityPath: stateHome + "/omarchy-wallpaper-agent/activity.json"
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -28,24 +36,48 @@ Item {
   readonly property int cornerRadius: Style.cornerRadius
   readonly property int contentMargin: Style.spacing.panelPadding
   readonly property int cardWidth: Math.min(
-    Style.space(root.viewMode === "history" ? 680 : 520),
+    Style.space(root.viewMode === "history" ? 680 : 640),
     panel.width - Style.gapsOut * 2
   )
+  readonly property int promptEditorHeight: Math.min(
+    Math.max(Style.space(96), Math.ceil(promptInput.contentHeight) + Style.spacing.md * 2),
+    Math.max(Style.space(96), panel.height - Style.space(190))
+  )
   readonly property int cardHeight: Math.min(
-    Style.space(root.viewMode === "history" ? 470 : 160),
+    root.viewMode === "history" ? Style.space(470) : root.promptEditorHeight + Style.space(118),
     panel.height - Style.gapsOut * 2
   )
 
   ListModel { id: historyModel }
+
+  function updateWorkingRows() {
+    for (var i = 0; i < historyModel.count; i++) {
+      var working = root.workerBusy
+        && root.activeMode === "refine"
+        && historyModel.get(i).recordId === root.activeRecordId
+      historyModel.setProperty(i, "working", working)
+    }
+  }
+
+  function applyActivity(content) {
+    var activity = ({})
+    try { activity = JSON.parse(String(content || "{}")) || ({}) } catch (e) { activity = ({}) }
+    root.workerBusy = activity.working === true
+    root.activeMode = root.workerBusy ? String(activity.mode || "") : ""
+    root.activeRecordId = root.workerBusy ? String(activity.recordId || "") : ""
+    root.updateWorkingRows()
+  }
 
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
     root.viewMode = payload.mode === "history" ? "history" : "new"
+    root.draftViewMode = "new"
     root.initialPrompt = String(payload.prompt || "")
     root.selectedRecordId = ""
     root.themeContextEnabled = payload.themeContextEnabled !== false
+    promptInput.text = root.initialPrompt
 
     historyModel.clear()
     var history = payload.history || []
@@ -57,9 +89,11 @@ Item {
         image: String(entry.image || ""),
         themeName: String(entry.themeName || entry.themeSlug || "Unknown theme"),
         updatedAt: String(entry.updatedAt || ""),
-        lastInstruction: String(entry.lastInstruction || "")
+        lastInstruction: String(entry.lastInstruction || ""),
+        working: false
       })
     }
+    root.updateWorkingRows()
     historyList.currentIndex = historyModel.count > 0 ? 0 : -1
 
     root.opened = true
@@ -67,7 +101,6 @@ Item {
       if (root.viewMode === "history") {
         historyList.forceActiveFocus()
       } else {
-        promptInput.text = root.initialPrompt
         promptInput.forceActiveFocus()
         promptInput.cursorPosition = promptInput.text.length
       }
@@ -91,9 +124,18 @@ Item {
   function beginRefine(index) {
     if (index < 0 || index >= historyModel.count)
       return
+    if (root.workerBusy) {
+      Quickshell.execDetached([
+        root.omarchyPath + "/bin/omarchy-notification-send",
+        "Wallpaper generation already running",
+        "Wait for the current job to finish before starting another edit"
+      ])
+      return
+    }
 
     root.selectedRecordId = historyModel.get(index).recordId
     root.viewMode = "refine"
+    root.draftViewMode = "refine"
     promptInput.text = ""
     Qt.callLater(function() { promptInput.forceActiveFocus() })
   }
@@ -104,13 +146,15 @@ Item {
 
     root.selectedRecordId = ""
     root.viewMode = "new"
+    root.draftViewMode = "new"
     promptInput.text = historyModel.get(index).prompt
     promptInput.cursorPosition = promptInput.text.length
     Qt.callLater(function() { promptInput.forceActiveFocus() })
   }
 
   function showHistory() {
-    root.selectedRecordId = ""
+    if (root.viewMode !== "history")
+      root.draftViewMode = root.viewMode
     root.viewMode = "history"
     historyList.currentIndex = historyModel.count > 0 ? Math.max(0, historyList.currentIndex) : -1
     Qt.callLater(function() { historyList.forceActiveFocus() })
@@ -119,11 +163,33 @@ Item {
   function showNew() {
     root.selectedRecordId = ""
     root.viewMode = "new"
+    root.draftViewMode = "new"
     promptInput.text = ""
     Qt.callLater(function() { promptInput.forceActiveFocus() })
   }
 
+  function showDraft() {
+    root.viewMode = root.draftViewMode === "refine" && root.selectedRecordId ? "refine" : "new"
+    Qt.callLater(function() { promptInput.forceActiveFocus() })
+  }
+
+  function toggleView() {
+    if (root.viewMode === "history")
+      root.showDraft()
+    else
+      root.showHistory()
+  }
+
   function submit(ignoreThemeContext) {
+    if (root.workerBusy) {
+      Quickshell.execDetached([
+        root.omarchyPath + "/bin/omarchy-notification-send",
+        "Wallpaper generation already running",
+        "Only one wallpaper job can run at a time"
+      ])
+      return
+    }
+
     var prompt = String(promptInput.text || "").trim()
     if (!prompt) {
       Quickshell.execDetached([
@@ -153,6 +219,23 @@ Item {
     command.push("--prompt", prompt)
     Quickshell.execDetached(command)
     root.dismiss()
+  }
+
+  FileView {
+    id: activityFile
+    path: root.activityPath
+    watchChanges: true
+    printErrors: false
+    onLoaded: root.applyActivity(text())
+    onFileChanged: reload()
+    onLoadFailed: root.applyActivity("")
+  }
+
+  Timer {
+    interval: 1000
+    repeat: true
+    running: true
+    onTriggered: activityFile.reload()
   }
 
   PanelWindow {
@@ -211,6 +294,7 @@ Item {
           }
 
           Rectangle {
+            id: promptHistoryButton
             width: Style.space(88)
             height: Style.space(30)
             anchors.top: parent.top
@@ -235,9 +319,21 @@ Item {
             }
           }
 
+          Text {
+            anchors.right: promptHistoryButton.left
+            anchors.rightMargin: Style.spacing.md
+            anchors.verticalCenter: promptHistoryButton.verticalCenter
+            visible: root.workerBusy
+            text: root.activeMode === "refine" ? "Editing wallpaper…" : "Generating wallpaper…"
+            color: root.foreground
+            opacity: 0.72
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+          }
+
           Rectangle {
             id: promptBox
-            height: Style.space(52)
+            height: root.promptEditorHeight
             anchors.top: promptTitle.bottom
             anchors.topMargin: Style.spacing.lg
             anchors.left: parent.left
@@ -249,6 +345,7 @@ Item {
               anchors.fill: parent
               anchors.margins: Style.spacing.md
               verticalAlignment: Text.AlignVCenter
+              wrapMode: Text.Wrap
               visible: promptInput.text.length === 0
               text: root.viewMode === "refine"
                 ? "Make the water brighter and preserve everything else..."
@@ -259,26 +356,33 @@ Item {
               font.pixelSize: Style.font.body
             }
 
-            TextInput {
+            TextEdit {
               id: promptInput
               anchors.fill: parent
               anchors.margins: Style.spacing.md
-              verticalAlignment: TextInput.AlignVCenter
               color: root.selectedText
               selectionColor: Color.menu.selectedBorder
               selectedTextColor: root.selectedText
               font.family: Style.font.menuFamily
               font.pixelSize: Style.font.body
+              textFormat: TextEdit.PlainText
+              wrapMode: TextEdit.Wrap
               clip: true
               selectByMouse: true
-              maximumLength: 600
 
               Keys.onPressed: function(event) {
-                if (event.key === Qt.Key_Escape) {
+                if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                    && (event.modifiers & Qt.ControlModifier) !== 0) {
+                  root.toggleView()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Escape) {
                   root.dismiss()
                   event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                  root.submit((event.modifiers & Qt.ShiftModifier) !== 0)
+                  if ((event.modifiers & Qt.AltModifier) !== 0)
+                    promptInput.insert(promptInput.cursorPosition, "\n")
+                  else
+                    root.submit((event.modifiers & Qt.ShiftModifier) !== 0)
                   event.accepted = true
                 }
               }
@@ -289,7 +393,7 @@ Item {
             anchors.top: promptBox.bottom
             anchors.topMargin: Style.spacing.md
             anchors.left: parent.left
-            text: "Return  ·  Shift+Return ignores theme  ·  Esc"
+            text: "Return submits  ·  Shift+Return ignores theme  ·  Alt+Return newline  ·  Ctrl+Tab history  ·  Esc"
             color: root.mutedForeground
             opacity: 0.55
             font.family: Style.font.menuFamily
@@ -314,6 +418,7 @@ Item {
           }
 
           Rectangle {
+            id: historyNewButton
             width: Style.space(72)
             height: Style.space(30)
             anchors.top: parent.top
@@ -339,10 +444,22 @@ Item {
           }
 
           Text {
+            anchors.right: historyNewButton.left
+            anchors.rightMargin: Style.spacing.md
+            anchors.verticalCenter: historyNewButton.verticalCenter
+            visible: root.workerBusy
+            text: root.activeMode === "refine" ? "One edit running" : "Generating new wallpaper…"
+            color: root.foreground
+            opacity: 0.72
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
             id: historyHint
             anchors.left: parent.left
             anchors.bottom: parent.bottom
-            text: "Return edits  ·  Shift+Return reuses prompt  ·  Esc"
+            text: "Return edits  ·  Shift+Return reuses prompt  ·  Ctrl+Tab new  ·  Esc"
             color: root.mutedForeground
             opacity: 0.55
             font.family: Style.font.menuFamily
@@ -375,7 +492,11 @@ Item {
             keyNavigationWraps: true
 
             Keys.onPressed: function(event) {
-              if (event.key === Qt.Key_Escape) {
+              if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                  && (event.modifiers & Qt.ControlModifier) !== 0) {
+                root.toggleView()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Escape) {
                 root.dismiss()
                 event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
@@ -391,7 +512,7 @@ Item {
               width: historyList.width
               height: Style.space(76)
               radius: root.cornerRadius
-              color: ListView.isCurrentItem ? root.selectedBackground : "transparent"
+              color: ListView.isCurrentItem || model.working ? root.selectedBackground : "transparent"
 
               Rectangle {
                 id: thumbnailFrame
@@ -436,9 +557,11 @@ Item {
                 anchors.rightMargin: Style.spacing.md
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: Style.spacing.sm
-                text: model.themeName + "  ·  " + model.updatedAt.replace("T", " ").slice(0, 16)
-                color: root.mutedForeground
-                opacity: 0.55
+                text: model.working
+                  ? "●  Editing…"
+                  : model.themeName + "  ·  " + model.updatedAt.replace("T", " ").slice(0, 16)
+                color: model.working ? root.foreground : root.mutedForeground
+                opacity: model.working ? 0.9 : 0.55
                 font.family: Style.font.menuFamily
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideRight

@@ -6,6 +6,14 @@ state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallpaper-agent"
 records_dir="$state_root/records"
 mkdir -p "$records_dir"
 
+activity_file="$state_root/activity.json"
+if [[ -r $activity_file ]]; then
+  activity_pid=$(jq -r '.pid // empty' "$activity_file" 2>/dev/null || true)
+  if [[ ! $activity_pid =~ ^[0-9]+$ ]] || ! kill -0 "$activity_pid" 2>/dev/null; then
+    rm -f "$activity_file"
+  fi
+fi
+
 # Import images created before history tracking was added. Their original
 # ephemeral Codex session cannot be resumed, so the first edit starts a new
 # persistent session with the existing image attached.

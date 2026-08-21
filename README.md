@@ -18,7 +18,7 @@ o.bind(
 
 Then reload Hyprland with `hyprctl reload`.
 
-`Super+Ctrl+G` opens the wallpaper prompt. Use the `History` control in its header to move between new generation and generated wallpaper history.
+`Super+Ctrl+G` opens the wallpaper prompt. Use `Ctrl+Tab` or the header control to move between a new prompt and generated wallpaper history.
 
 You can optionally prefill the prompt:
 
@@ -36,9 +36,11 @@ Theme matching is enabled by default. To ignore the current theme for one genera
 
 The current backend is Codex.
 
-In the prompt, press `Return` to generate with the current theme, `Shift+Return` to generate without theme context, or `Esc` to close it.
+The prompt wraps onto multiple lines and grows with its contents. Press `Alt+Return` to insert a newline, `Return` to generate with the current theme, `Shift+Return` to generate without theme context, or `Esc` to close it.
 
 In history, use the arrow keys to choose a wallpaper. Press `Return` to describe an edit in its existing Codex thread, or `Shift+Return` to copy its original prompt into a new-generation prompt. Refinements replace the selected wallpaper file instead of creating another image. Each original generation therefore occupies one wallpaper slot no matter how many times it is refined.
+
+Every original generation starts a new Codex thread; refinements resume the selected thread. Only one generation or refinement can run at a time. The active history row is marked `Editing…`, and both new prompts and other edits stay locked until that job finishes.
 
 While a generation is running, a small animated `Generating` indicator appears in the top bar. It disappears completely when the worker finishes or stops.
 

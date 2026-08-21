@@ -59,6 +59,7 @@ omarchy_current_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current"
 records_dir="$state_root/records"
 mkdir -p "$state_root/jobs" "$records_dir"
 status_file="$state_root/status"
+activity_file="$state_root/activity.json"
 
 exec 9>"$state_root/generate.lock"
 if ! flock -n 9; then
@@ -75,6 +76,7 @@ exec >>"$log_file" 2>&1
 failure_notified=0
 on_exit() {
   local status=$1
+  rm -f "$activity_file"
   printf '%s\n' idle >"$status_file"
   if (( status != 0 && failure_notified == 0 )); then
     notify "Wallpaper generation failed" "Codex stopped before producing an image. Log: $log_file"
@@ -135,6 +137,23 @@ if [[ $mode == refine ]]; then
     esac
   fi
 fi
+
+activity_tmp="$job_dir/activity.json"
+jq -n \
+  --arg mode "$mode" \
+  --arg recordId "$record_id" \
+  --arg jobId "$job_id" \
+  --argjson pid "$$" \
+  --arg startedAt "$(date --iso-8601=seconds)" \
+  '{
+    working: true,
+    mode: $mode,
+    recordId: $recordId,
+    jobId: $jobId,
+    pid: $pid,
+    startedAt: $startedAt
+  }' >"$activity_tmp"
+mv "$activity_tmp" "$activity_file"
 
 monitors_json=$(hyprctl monitors -j)
 if ! jq -e '[.[] | select((.disabled // false) == false)] | length > 0' >/dev/null <<<"$monitors_json"; then

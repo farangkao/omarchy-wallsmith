@@ -1,0 +1,42 @@
+#!/bin/bash
+
+set -euo pipefail
+
+theme_context_enabled=true
+
+while (( $# > 0 )); do
+  case "$1" in
+  --no-theme-context)
+    theme_context_enabled=false
+    shift
+    ;;
+  -h | --help)
+    echo "Usage: omarchy-wallpaper [--no-theme-context] [prompt]"
+    exit 0
+    ;;
+  --)
+    shift
+    break
+    ;;
+  -*)
+    echo "Unknown option: $1" >&2
+    exit 2
+    ;;
+  *)
+    break
+    ;;
+  esac
+done
+
+prompt="$*"
+payload=$(jq -cn \
+  --arg prompt "$prompt" \
+  --argjson themeContextEnabled "$theme_context_enabled" \
+  '{prompt: $prompt, themeContextEnabled: $themeContextEnabled}')
+result=$(omarchy-shell shell summon jesperlugner.wallpaper-agent "$payload")
+
+if [[ $result != "ok" ]]; then
+  echo "Wallpaper Agent is not available. Enable it with:" >&2
+  echo "  omarchy plugin enable jesperlugner.wallpaper-agent" >&2
+  exit 1
+fi

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "jesperlugner.wallpaper-agent",
+  "name": "Wallpaper Agent",
+  "version": "0.2.0",
+  "author": "Jesper Lugner",
+  "description": "Generate a crop-safe wallpaper with Codex and apply it to the current Omarchy theme",
+  "kinds": [
+    "overlay",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "WallpaperPrompt.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Wallpaper Generation",
+    "description": "Shows while Codex is generating a wallpaper",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

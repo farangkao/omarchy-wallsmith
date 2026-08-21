@@ -12,7 +12,7 @@ Bind the bundled launcher to a key in `~/.config/hypr/bindings.lua`:
 o.bind(
   "SUPER + CTRL + G",
   "Generate wallpaper",
-  "~/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper"
+  "$HOME/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper"
 )
 ```
 

@@ -1,0 +1,62 @@
+#!/bin/bash
+
+set -euo pipefail
+
+record_id="${1:-}"
+if [[ ! $record_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "Usage: delete-record <record-id>" >&2
+  exit 2
+fi
+
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallsmith"
+records_dir="$state_root/records"
+record_file="$records_dir/$record_id.json"
+[[ -r $record_file ]] || exit 0
+
+notify() {
+  if command -v omarchy-notification-send >/dev/null 2>&1; then
+    omarchy-notification-send "$@" >/dev/null 2>&1 || true
+  fi
+}
+
+# An in-flight edit owns this record's Codex session and image file.
+exec 9>"$records_dir/$record_id.lock"
+if ! flock -n 9; then
+  notify "Wallpaper not deleted" "That wallpaper is being edited; cancel the edit first"
+  exit 1
+fi
+
+image=$(jq -r '.image // empty' "$record_file")
+
+was_current=0
+current_bg=$(realpath "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/current/background" 2>/dev/null || true)
+if [[ -n $image && -f $image ]]; then
+  image=$(realpath "$image")
+  case "$image" in
+  "$HOME/.config/omarchy/backgrounds/"*)
+    [[ $image == "$current_bg" ]] && was_current=1
+    rm -f "$image"
+    ;;
+  esac
+fi
+
+# Job directories referenced by this record's turns (plus its workspace).
+while IFS= read -r job; do
+  [[ $job =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || continue
+  rm -rf "$state_root/jobs/$job"
+done < <(jq -r '((.turns // [])[].jobId // empty), (.workspace // empty | split("/") | last // empty)' "$record_file" | sort -u)
+
+# Live-refresh symlinks that pointed at the deleted image.
+if [[ -d $state_root/background-refresh && -n $image ]]; then
+  while IFS= read -r -d '' link; do
+    [[ $(readlink "$link") == "$image" ]] && rm -f "$link"
+  done < <(find "$state_root/background-refresh" -maxdepth 1 -type l -print0)
+fi
+
+rm -f "$record_file" "$records_dir/$record_id.lock"
+
+if (( was_current )); then
+  omarchy theme bg next >/dev/null 2>&1 || true
+fi
+
+printf 'Deleted record %s\n' "$record_id"

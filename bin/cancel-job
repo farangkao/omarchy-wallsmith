@@ -1,0 +1,27 @@
+#!/bin/bash
+
+set -euo pipefail
+
+job_id="${1:-}"
+if [[ ! $job_id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "Usage: cancel-job <job-id>" >&2
+  exit 2
+fi
+
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-wallsmith"
+activity_file="$state_root/activity.json"
+[[ -r $activity_file ]] || exit 0
+
+pid=$(jq -r --arg jobId "$job_id" '[ .[] | select(.jobId == $jobId) ][0].pid // empty' "$activity_file" 2>/dev/null || true)
+[[ $pid =~ ^[0-9]+$ ]] || exit 0
+
+# The marker tells the worker's exit trap this was a cancellation, not a
+# failure, so it notifies accordingly.
+mkdir -p "$state_root/cancelled"
+touch "$state_root/cancelled/$job_id"
+
+kill -TERM -- "-$pid" 2>/dev/null || true
+pkill -TERM -P "$pid" 2>/dev/null || true
+kill -TERM "$pid" 2>/dev/null || true
+
+printf 'Cancelled job %s\n' "$job_id"

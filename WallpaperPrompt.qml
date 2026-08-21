@@ -109,6 +109,20 @@ Item {
     Qt.callLater(function() { promptInput.forceActiveFocus() })
   }
 
+  function showHistory() {
+    root.selectedRecordId = ""
+    root.viewMode = "history"
+    historyList.currentIndex = historyModel.count > 0 ? Math.max(0, historyList.currentIndex) : -1
+    Qt.callLater(function() { historyList.forceActiveFocus() })
+  }
+
+  function showNew() {
+    root.selectedRecordId = ""
+    root.viewMode = "new"
+    promptInput.text = ""
+    Qt.callLater(function() { promptInput.forceActiveFocus() })
+  }
+
   function submit(ignoreThemeContext) {
     var prompt = String(promptInput.text || "").trim()
     if (!prompt) {
@@ -197,6 +211,31 @@ Item {
           }
 
           Rectangle {
+            width: Style.space(88)
+            height: Style.space(30)
+            anchors.top: parent.top
+            anchors.right: parent.right
+            radius: root.cornerRadius
+            color: root.selectedBackground
+            opacity: promptHistoryMouse.containsMouse ? 1 : 0.72
+
+            Text {
+              anchors.centerIn: parent
+              text: "History  →"
+              color: root.foreground
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            MouseArea {
+              id: promptHistoryMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              onClicked: root.showHistory()
+            }
+          }
+
+          Rectangle {
             id: promptBox
             height: Style.space(52)
             anchors.top: promptTitle.bottom
@@ -272,6 +311,31 @@ Item {
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.heading
             font.weight: Font.DemiBold
+          }
+
+          Rectangle {
+            width: Style.space(72)
+            height: Style.space(30)
+            anchors.top: parent.top
+            anchors.right: parent.right
+            radius: root.cornerRadius
+            color: root.selectedBackground
+            opacity: historyNewMouse.containsMouse ? 1 : 0.72
+
+            Text {
+              anchors.centerIn: parent
+              text: "←  New"
+              color: root.foreground
+              font.family: Style.font.menuFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            MouseArea {
+              id: historyNewMouse
+              anchors.fill: parent
+              hoverEnabled: true
+              onClicked: root.showNew()
+            }
           }
 
           Text {

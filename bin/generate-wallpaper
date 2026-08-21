@@ -353,6 +353,13 @@ mv "$processed_image" "$final_image"
 rm -f "$raw_image"
 
 omarchy theme bg set "$final_image"
+if [[ $mode == refine ]] && command -v omarchy-shell >/dev/null 2>&1; then
+  refresh_dir="$state_root/background-refresh"
+  refresh_link="$refresh_dir/$job_id.jpg"
+  mkdir -p "$refresh_dir"
+  ln -s "$final_image" "$refresh_link"
+  omarchy-shell -q background set "$refresh_link" || true
+fi
 omarchy theme bg cache >/dev/null 2>&1 &
 
 updated_at=$(date --iso-8601=seconds)

@@ -66,7 +66,12 @@ cat >"$fake_bin/omarchy-notification-send" <<'EOF'
 printf 'notify %s\n' "$*" >>"$TEST_LOG"
 EOF
 
-chmod +x "$fake_bin/hyprctl" "$fake_bin/codex" "$fake_bin/omarchy" "$fake_bin/omarchy-notification-send"
+cat >"$fake_bin/omarchy-shell" <<'EOF'
+#!/bin/bash
+printf 'omarchy-shell %s\n' "$*" >>"$TEST_LOG"
+EOF
+
+chmod +x "$fake_bin/hyprctl" "$fake_bin/codex" "$fake_bin/omarchy" "$fake_bin/omarchy-notification-send" "$fake_bin/omarchy-shell"
 
 HOME="$fake_home" \
 XDG_STATE_HOME="$fake_home/.local/state" \
@@ -131,6 +136,10 @@ jq -e '
 ' "${records[0]}" >/dev/null
 session_workspace=$(jq -r '.workspace' "${records[0]}")
 [[ ! -e "$session_workspace/generated.png" ]] || { echo "Temporary source image was not cleaned up" >&2; exit 1; }
+mapfile -t refresh_links < <(find "$fake_home/.local/state/omarchy-wallpaper-agent/background-refresh" -maxdepth 1 -type l)
+[[ ${#refresh_links[@]} -eq 1 ]] || { echo "Expected one live background refresh link" >&2; exit 1; }
+[[ $(readlink "${refresh_links[0]}") == "${wallpapers[0]}" ]] || { echo "Refresh link points at the wrong wallpaper" >&2; exit 1; }
+grep -F "omarchy-shell -q background set ${refresh_links[0]}" "$test_log" >/dev/null
 
 HOME="$fake_home" \
 XDG_STATE_HOME="$fake_home/.local/state" \

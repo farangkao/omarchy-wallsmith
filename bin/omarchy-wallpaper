@@ -35,9 +35,9 @@ while (( $# > 0 )); do
 done
 
 prompt="$*"
+history=$("$plugin_dir/bin/wallpaper-history")
 if [[ $mode == history ]]; then
   [[ -z $prompt ]] || { echo "--history does not accept a prompt" >&2; exit 2; }
-  history=$("$plugin_dir/bin/wallpaper-history")
   payload=$(jq -cn \
     --arg mode "$mode" \
     --argjson history "$history" \
@@ -46,8 +46,9 @@ else
   payload=$(jq -cn \
     --arg mode "$mode" \
     --arg prompt "$prompt" \
+    --argjson history "$history" \
     --argjson themeContextEnabled "$theme_context_enabled" \
-    '{mode: $mode, prompt: $prompt, themeContextEnabled: $themeContextEnabled}')
+    '{mode: $mode, prompt: $prompt, history: $history, themeContextEnabled: $themeContextEnabled}')
 fi
 result=$(omarchy-shell shell summon jesperlugner.wallpaper-agent "$payload")
 

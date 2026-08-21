@@ -14,17 +14,11 @@ o.bind(
   "Generate wallpaper",
   "$HOME/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper"
 )
-o.bind(
-  "SUPER + CTRL + SHIFT + G",
-  "Wallpaper history",
-  "$HOME/.config/omarchy/plugins/jesperlugner.wallpaper-agent/bin/omarchy-wallpaper --history"
-)
 ```
 
 Then reload Hyprland with `hyprctl reload`.
 
-- `Super+Ctrl+G` opens a new wallpaper prompt.
-- `Super+Ctrl+Shift+G` opens generated wallpaper history.
+`Super+Ctrl+G` opens the wallpaper prompt. Use the `History` control in its header to move between new generation and generated wallpaper history.
 
 You can optionally prefill the prompt:
 
@@ -57,7 +51,7 @@ While a generation is running, a small animated `Generating` indicator appears i
 5. It stores the JPEG in `~/.config/omarchy/backgrounds/<current-theme>/`.
 6. It applies the image with `omarchy theme bg set` and sends a notification.
 
-For refinements, the plugin resumes the exact saved Codex session and attaches the current wallpaper as the editing reference. Conversation context preserves the intent; the attachment preserves the actual pixels. The selected JPEG is then replaced atomically. Prompts, session metadata, and per-turn log paths are kept under `~/.local/state/omarchy-wallpaper-agent/records/`, while detailed job logs remain under `jobs/`.
+For refinements, the plugin resumes the exact saved Codex session and attaches the current wallpaper as the editing reference. Conversation context preserves the intent; the attachment preserves the actual pixels. The selected JPEG is then replaced atomically, and the live shell receives a cache-busted path so the updated pixels appear immediately. Prompts, session metadata, and per-turn log paths are kept under `~/.local/state/omarchy-wallpaper-agent/records/`, while detailed job logs remain under `jobs/`.
 
 Omarchy currently uses one shared background and center-crops it independently on each monitor. Mixed portrait and landscape displays therefore share a crop-safe master rather than receiving separate images.
 

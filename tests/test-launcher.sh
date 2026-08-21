@@ -19,6 +19,8 @@ EOF
 chmod +x "$fake_bin/omarchy-shell"
 
 TEST_ARGV_FILE="$argv_file" \
+HOME="$fake_home" \
+XDG_STATE_HOME="$fake_home/.local/state" \
 PATH="$fake_bin:/usr/bin:/bin" \
   "$plugin_dir/bin/omarchy-wallpaper" --no-theme-context "A warm desert at noon"
 
@@ -31,6 +33,7 @@ jq -e '
   and
   .prompt == "A warm desert at noon"
   and .themeContextEnabled == false
+  and (.history | length) == 0
 ' >/dev/null <<<"${argv[3]}"
 
 legacy_id="20260821-101010-1234"

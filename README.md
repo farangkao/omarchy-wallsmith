@@ -32,6 +32,14 @@ o.bind(
 
 Reload Hyprland with `hyprctl reload`.
 
+To uninstall, remove the keybinding again and run:
+
+```bash
+omarchy plugin remove jesperlugner.wallsmith
+```
+
+Generated wallpapers stay in `~/.config/omarchy/backgrounds/`; delete them and `~/.local/state/omarchy-wallsmith/` if you want a full cleanup.
+
 ## Use
 
 `Super+Ctrl+G` opens the Wallsmith card: a multiline prompt on top, and your generated wallpaper history directly below it.

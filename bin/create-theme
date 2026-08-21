@@ -112,7 +112,7 @@ if ! codex exec \
   --config 'model_reasoning_effort="low"' \
   --json \
   --output-last-message "$palette_file" \
-  --image "$image" \
+  --image="$image" \
   "$agent_task" \
   >"$job_dir/codex-events.jsonl" \
   2>"$job_dir/codex-progress.log"; then

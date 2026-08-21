@@ -231,6 +231,9 @@ grep -q 'bright_magenta = "#f5c2e7"' "$theme_dir/colors.toml"
 [[ -f "$theme_dir/backgrounds/1-test-lagoon.jpg" ]] || { echo "Theme wallpaper missing" >&2; exit 1; }
 [[ -f "$theme_dir/preview.png" ]] || { echo "Theme preview missing" >&2; exit 1; }
 grep -F 'Dominant colors extracted from the image' "$agent_task_file" >/dev/null
+# --image must use the equals form: codex's space form swallows the task
+# argument and then waits for a prompt on stdin.
+grep -Fx "codex-arg=--image=${wallpapers[0]}" "$test_log" >/dev/null
 grep -F "omarchy theme set test-lagoon" "$test_log" >/dev/null
 grep -F "discard-theme test-lagoon retro-82" "$test_log" >/dev/null
 jq -e '.generatedThemes == ["test-lagoon"]' "${records[0]}" >/dev/null

@@ -48,9 +48,14 @@ if [[ $task == *"Design an Omarchy desktop theme palette"* ]]; then
     [[ ${args[i]} == --output-last-message ]] && out=${args[i + 1]}
   done
   cat >"$out" <<'JSON'
+mise ~/.config/mise/config.toml tools: codex@0.149.1
 {"name": "Test Lagoon", "mode": "dark", "colors": {"accent": "#89b4fa", "selection": "#45475a", "muted": "#585b70", "background": "#1e1e2e", "dark_background": "#161622", "darker_background": "#101019", "lighter_background": "#313244", "foreground": "#cdd6f4", "dark_foreground": "#6c7086", "light_foreground": "#bac2de", "bright_foreground": "#cdd6f4", "red": "#f38ba8", "yellow": "#f9e2af", "orange": "#f6b6ab", "green": "#a6e3a1", "cyan": "#94e2d5", "blue": "#89b4fa", "magenta": "#f5c2e7", "brown": "#7b5b55", "bright_red": "#f38ba8", "bright_yellow": "#f9e2af", "bright_green": "#a6e3a1", "bright_cyan": "#94e2d5", "bright_blue": "#89b4fa", "bright_magenta": "#f5c2e7"}}
+
+Hope this palette suits the wallpaper.
 JSON
-  printf '%s\n' '{"type":"thread.started","thread_id":"theme-thread"}'
+  printf '%s\n' \
+    'mise ~/.config/mise/config.toml tools: codex@0.149.1' \
+    '{"type":"thread.started","thread_id":"theme-thread"}'
   exit 0
 fi
 printf 'worker-status %s\n' "$(cat "$XDG_STATE_HOME/omarchy-wallsmith/status")" >>"$TEST_LOG"
@@ -71,7 +76,11 @@ while (( $# > 0 )); do
 done
 mkdir -p "$(dirname "$output_path")"
 cp "$fixture" "$output_path"
-printf '%s\n' '{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}'
+# Real setups run codex through a mise shim, which can print a banner to
+# stdout before the JSONL events start; the scripts must tolerate that.
+printf '%s\n' \
+  'mise ~/.config/mise/config.toml tools: codex@0.149.1' \
+  '{"type":"thread.started","thread_id":"0199a213-81c0-7800-8aa1-bbab2a035a53"}'
 EOF
 
 cat >"$fake_bin/omarchy" <<'EOF'

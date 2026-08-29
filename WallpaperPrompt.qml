@@ -353,6 +353,11 @@ Item {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
 
+    // This overlay is a layer surface, so the launcher's launch feedback never
+    // sees a toplevel appear and would pin its "Launching…" OSD until timeout.
+    if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.closeLaunchFeedback === "function")
+      root.shell.appLibrary.closeLaunchFeedback(root.shell.appLibrary.launchSerial)
+
     root.clearRefineTarget()
     root.inlineError = ""
     root.themeContextEnabled = payload.themeContextEnabled !== false

@@ -12,6 +12,10 @@ Item {
   property var shell: null
   property var manifest: null
 
+  // Omarchy 4.0.4 strips __sourceDir from injected manifests; resolve our
+  // directory relative to this file instead.
+  readonly property string pluginDir: Qt.resolvedUrl("WallpaperPrompt.qml").toString().replace("file://", "").replace(/\/[^/]*$/, "")
+
   property bool opened: false
   property bool themeContextEnabled: true
   property int activeJobs: 0
@@ -224,7 +228,7 @@ Item {
     var selected = root.refineSelected
     if (!selected || selected.isCurrent || !root.refineActive)
       return
-    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    var sourceDir = root.pluginDir
     if (!sourceDir)
       return
     if (root.activeRefineIds[root.refineRecordId] === true) {
@@ -296,7 +300,7 @@ Item {
   }
 
   function refreshHistory() {
-    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    var sourceDir = root.pluginDir
     if (!sourceDir || historyProc.running)
       return
     historyProc.command = [sourceDir + "/bin/wallpaper-history"]
@@ -495,7 +499,7 @@ Item {
       root.showError("Still generating — a theme needs the finished wallpaper")
       return
     }
-    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    var sourceDir = root.pluginDir
     if (!sourceDir)
       return
     Quickshell.execDetached([sourceDir + "/bin/create-theme", entry.recordId])
@@ -550,7 +554,7 @@ Item {
   }
 
   function executeConfirm() {
-    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    var sourceDir = root.pluginDir
     var action = root.confirmAction
     var target = root.confirmTargetId
     if (sourceDir && target) {
@@ -599,7 +603,7 @@ Item {
       return
     }
 
-    var sourceDir = root.manifest ? String(root.manifest.__sourceDir || "") : ""
+    var sourceDir = root.pluginDir
     if (!sourceDir) {
       Quickshell.execDetached([
         root.omarchyPath + "/bin/omarchy-notification-send",

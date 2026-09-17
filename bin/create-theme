@@ -119,7 +119,24 @@ if ! codex exec \
   exit 1
 fi
 
-palette=$(sed '/^```/d' "$palette_file")
+# The toolchain around codex (e.g. a mise shim banner) can leak non-JSON
+# lines into the agent output, and the agent may add prose despite the
+# instructions; keep only the JSON object from the first "{" to the last "}".
+palette=$(
+  sed '/^```/d' "$palette_file" | awk '
+    !started {
+      if ((pos = index($0, "{")) == 0) next
+      started = 1
+      $0 = substr($0, pos)
+    }
+    { line[++n] = $0 }
+    END {
+      while (n > 0 && index(line[n], "}") == 0) n--
+      for (i = length(line[n]); i > 0; i--)
+        if (substr(line[n], i, 1) == "}") { line[n] = substr(line[n], 1, i); break }
+      for (i = 1; i <= n; i++) print line[i]
+    }'
+)
 keys_json=$(printf '%s\n' "${color_keys[@]}" | jq -Rn '[inputs]')
 if ! jq -e --argjson keys "$keys_json" '
     . as $p

@@ -418,7 +418,11 @@ else
   fi
 fi
 
-event_session_id=$(jq -sr '[.[] | select(.type == "thread.started") | .thread_id][0] // empty' "$job_dir/codex-events.jsonl")
+# codex's stdout can carry non-JSON noise — e.g. a mise shim banner like
+# "mise ~/.config/mise/config.toml tools: codex@0.149.1" — around the JSONL
+# events; keep only the object lines before handing the stream to jq.
+event_session_id=$(sed -n '/^[[:space:]]*{/p' "$job_dir/codex-events.jsonl" \
+  | jq -sr '[.[] | select(.type == "thread.started") | .thread_id][0] // empty')
 if [[ -n $event_session_id ]]; then
   session_id=$event_session_id
 fi

@@ -358,6 +358,11 @@ Item {
     if (root.shell && root.shell.appLibrary && typeof root.shell.appLibrary.closeLaunchFeedback === "function")
       root.shell.appLibrary.closeLaunchFeedback(root.shell.appLibrary.launchSerial)
 
+    // Omarchy 4.0.4 scopes shell.appLibrary to menu-kind plugins and drops
+    // closeLaunchFeedback entirely, so the call above no-ops there. The OSD
+    // only appears 2 s after the menu click; close it shortly after.
+    launchOsdFallback.restart()
+
     root.clearRefineTarget()
     root.inlineError = ""
     root.themeContextEnabled = payload.themeContextEnabled !== false
@@ -630,6 +635,16 @@ Item {
     interval: 3200
     repeat: false
     onTriggered: root.inlineError = ""
+  }
+
+  // Same CLI the shell's closeLaunchFeedback uses (AppLibrary.qml). Blunt on
+  // purpose: it closes whatever OSD is up, which at +2.5 s after a summon is
+  // the launch OSD.
+  Timer {
+    id: launchOsdFallback
+    interval: 2500
+    repeat: false
+    onTriggered: Quickshell.execDetached(["omarchy-shell", "osd", "close"])
   }
 
   FileView {
